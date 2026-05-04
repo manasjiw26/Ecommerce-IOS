@@ -16,10 +16,11 @@ struct ProductDetailView: View {
                             .frame(height: 300)
                             .clipped()
                     } placeholder: {
-                        ProgressView()
+                        RoundedRectangle(cornerRadius: 0)
+                            .fill(Color(.systemGray5))
                             .frame(maxWidth: .infinity)
                             .frame(height: 300)
-                            .background(Color.gray.opacity(0.1))
+                            .shimmer()
                     }
                 } else {
                     Rectangle()

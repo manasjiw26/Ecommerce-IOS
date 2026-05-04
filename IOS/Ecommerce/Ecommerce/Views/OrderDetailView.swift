@@ -66,10 +66,11 @@ struct OrderDetailView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
                             } placeholder: {
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.gray.opacity(0.1))
+                                    .fill(Color(.systemGray5))
                                     .frame(width: 70, height: 70)
-                                    .overlay(Image(systemName: "photo").foregroundColor(.gray))
+                                    .shimmer()
                             }
+                            .id(order.imageUrlString)
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(order.itemsSummary)

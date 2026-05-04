@@ -2,7 +2,7 @@ import Foundation
 
 class APIService {
     static let shared = APIService()
-    static let baseURL = "http://localhost:3000"
+    static let baseURL = Config.apiBaseURL
     private let baseURL_instance = APIService.baseURL
     
     func fetchProducts() async throws -> [Product] {
@@ -10,7 +10,10 @@ class APIService {
             throw URLError(.badURL)
         }
         
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60 // Wait up to 60s for Render to wake up
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)

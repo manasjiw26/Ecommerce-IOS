@@ -128,6 +128,7 @@ struct OrderCardView: View {
                         .frame(width: 80, height: 80)
                         .overlay(Image(systemName: "photo").foregroundColor(.gray))
                 }
+                .id(order.imageUrlString)
             }
             
             OrderProgressView(status: order.status)

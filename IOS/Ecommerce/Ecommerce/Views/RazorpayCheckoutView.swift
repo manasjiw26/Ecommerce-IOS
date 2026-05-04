@@ -170,9 +170,9 @@ struct RazorpayWebView: UIViewRepresentable {
                     }
                 },
                 "prefill": {
-                    "name": "Test User",
-                    "email": "test@example.com",
-                    "contact": "9999999999"
+                    "name": "\(AuthSession.shared.currentUser?.name ?? "Customer")",
+                    "email": "\(AuthSession.shared.currentUser?.email ?? "")",
+                    "contact": "8888888888"
                 },
                 "theme": {
                     "color": "#0d6efd"

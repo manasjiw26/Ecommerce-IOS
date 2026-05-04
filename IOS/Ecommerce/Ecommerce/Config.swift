@@ -2,6 +2,8 @@ import Foundation
 
 struct Config {
     // Paste your Razorpay Test Key here
-    // Example: "rzp_test_1DP5mmOlF5G5ag"
     static let razorpayKey = "rzp_test_Sl0hrrQoUTyluF"
+    
+    // Change this to your Mac's IP (e.g. 192.168.1.11) if testing on a real device
+    static let apiBaseURL = "https://ecommerce-ios.onrender.com"
 }

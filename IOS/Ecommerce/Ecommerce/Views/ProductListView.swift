@@ -126,8 +126,10 @@ struct ProductListView: View {
                     .refreshable {
                         await viewModel.fetchProducts()
                     }
+                    .transition(.opacity.animation(.easeIn(duration: 0.3)))
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: viewModel.isLoading)
             .navigationTitle("ShopEase")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -174,12 +176,12 @@ struct ProductCardView: View {
                     .aspectRatio(1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 } placeholder: {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(.systemGray5))
                         .aspectRatio(1, contentMode: .fit)
-                        .background(Color.gray.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shimmer()
                 }
+                .id(imageUrlString)
             } else {
                 Rectangle()
                     .fill(Color.gray.opacity(0.2))

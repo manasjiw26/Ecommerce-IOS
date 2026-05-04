@@ -139,9 +139,11 @@ struct CartItemRow: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 } placeholder: {
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.gray.opacity(0.1))
+                        .fill(Color(.systemGray5))
                         .frame(width: 80, height: 80)
+                        .shimmer()
                 }
+                .id(imageUrlString)
                 .overlay(
                     Group {
                         if availableStock == 0 {

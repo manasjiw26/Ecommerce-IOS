@@ -37,17 +37,31 @@ class ImageLoader: ObservableObject {
             return
         }
         
-        guard let url = URL(string: urlString) else { return }
+        // If the URL is already encoded (contains %), use it directly. 
+        // Otherwise, add encoding for safety.
+        let finalUrlString = urlString.contains("%") ? urlString : (urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString)
         
-        task = URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            guard let self = self, let data = data, error == nil, let downloadedImage = UIImage(data: data) else {
+        guard let url = URL(string: finalUrlString) else { 
+            print("❌ Invalid image URL: \(urlString)")
+            return 
+        }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        
+        task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if let error = error {
+                print("❌ Image Load Error: \(error.localizedDescription) for: \(self?.urlString ?? "")")
                 return
             }
             
-            ImageCache.shared.set(downloadedImage, forKey: self.urlString)
-            
-            DispatchQueue.main.async {
-                self.image = downloadedImage
+            if let data = data, let downloadedImage = UIImage(data: data) {
+                ImageCache.shared.set(downloadedImage, forKey: self?.urlString ?? "")
+                DispatchQueue.main.async {
+                    self?.image = downloadedImage
+                }
+            } else {
+                print("⚠️ Failed to convert data to image: \(self?.urlString ?? "")")
             }
         }
         task?.resume()
@@ -60,11 +74,13 @@ class ImageLoader: ObservableObject {
 
 struct CachedImageView<Content: View, Placeholder: View>: View {
     @StateObject private var loader: ImageLoader
+    let urlString: String
     let content: (Image) -> Content
     let placeholder: () -> Placeholder
     
     init(urlString: String, @ViewBuilder content: @escaping (Image) -> Content, @ViewBuilder placeholder: @escaping () -> Placeholder) {
         _loader = StateObject(wrappedValue: ImageLoader(urlString: urlString))
+        self.urlString = urlString
         self.content = content
         self.placeholder = placeholder
     }
@@ -77,8 +93,14 @@ struct CachedImageView<Content: View, Placeholder: View>: View {
                 placeholder()
             }
         }
+        .onAppear {
+            if loader.image == nil {
+                print("🖼️ Loading image: \(urlString)")
+                loader.loadImage()
+            }
+        }
         .onDisappear {
-            loader.cancel() // Cancel network request if it scrolls off screen
+            loader.cancel()
         }
     }
 }
