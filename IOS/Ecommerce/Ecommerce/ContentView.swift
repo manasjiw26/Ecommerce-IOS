@@ -21,16 +21,6 @@ struct ContentView: View {
                 .tag(0)
             
             NavigationView {
-                OrderListView()
-                    .navigationTitle("Orders")
-            }
-            .tabItem {
-                Image(systemName: "shippingbox.fill")
-                Text("Orders")
-            }
-            .tag(1)
-            
-            NavigationView {
                 CartView()
             }
             .tabItem {
@@ -38,6 +28,16 @@ struct ContentView: View {
                 Text("Cart")
             }
             .badge(cartManager.items.count)
+            .tag(1)
+
+            NavigationView {
+                OrderListView()
+                    .navigationTitle("Orders")
+            }
+            .tabItem {
+                Image(systemName: "shippingbox.fill")
+                Text("Orders")
+            }
             .tag(2)
         }
         .tint(.primary)

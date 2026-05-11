@@ -1,39 +1,15 @@
 import SwiftUI
+import UIKit
 
 struct ProductDetailView: View {
     let product: Product
     @EnvironmentObject var cartManager: CartManager
+    private let imageHeight: CGFloat = 320
     
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let imageUrlString = product.imageUrl {
-                    CachedImageView(urlString: imageUrlString) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 300)
-                            .clipped()
-                    } placeholder: {
-                        RoundedRectangle(cornerRadius: 0)
-                            .fill(Color(.systemGray5))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 300)
-                            .shimmer()
-                    }
-                } else {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 300)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 50, height: 50)
-                                .foregroundColor(.gray)
-                        )
-                }
+                productImage
                 
                 VStack(alignment: .leading, spacing: 12) {
                     if let category = product.category {
@@ -44,8 +20,9 @@ struct ProductDetailView: View {
                     }
                     
                     Text(product.name)
-                        .font(.title)
+                        .font(.title2)
                         .fontWeight(.bold)
+                        .fixedSize(horizontal: false, vertical: true)
                     
                     Text("$\(String(format: "%.2f", product.price))")
                         .font(.title2)
@@ -69,32 +46,75 @@ struct ProductDetailView: View {
                             .font(.headline)
                         Text(description)
                             .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding()
-                
-                Button(action: {
-                    let impactMed = UIImpactFeedbackGenerator(style: .medium)
-                    impactMed.impactOccurred()
-                    cartManager.addToCart(product: product)
-                }) {
-                    Text("Add to Cart")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.black)
-                        .cornerRadius(10)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 20)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            addToCartBar
+        }
         .onAppear {
             if let category = product.category {
                 RecommendationEngine.shared.logView(for: category)
             }
         }
+    }
+
+    private var productImage: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color(.systemGray6)
+
+                if let imageUrlString = product.imageUrl {
+                    CachedImageView(urlString: imageUrlString) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geometry.size.width, height: imageHeight)
+                            .clipped()
+                    } placeholder: {
+                        Rectangle()
+                            .fill(Color(.systemGray5))
+                            .shimmer()
+                    }
+                    .id(imageUrlString)
+                } else {
+                    Image(systemName: "photo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 50, height: 50)
+                        .foregroundColor(.gray)
+                }
+            }
+            .frame(width: geometry.size.width, height: imageHeight)
+            .clipped()
+        }
+        .frame(height: imageHeight)
+    }
+
+    private var addToCartBar: some View {
+        VStack(spacing: 0) {
+            Button(action: {
+                let impactMed = UIImpactFeedbackGenerator(style: .medium)
+                impactMed.impactOccurred()
+                cartManager.addToCart(product: product)
+            }) {
+                Label("Add to Cart", systemImage: "cart.badge.plus")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.black)
+                    .cornerRadius(10)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        }
+        .background(Color.clear)
     }
 }
