@@ -98,6 +98,7 @@ struct ProductDetailView: View {
 
     private var addToCartBar: some View {
         VStack(spacing: 0) {
+            Divider()
             Button(action: {
                 let impactMed = UIImpactFeedbackGenerator(style: .medium)
                 impactMed.impactOccurred()
@@ -109,12 +110,11 @@ struct ProductDetailView: View {
                     .frame(maxWidth: .infinity)
                     .padding()
                     .background(Color.black)
-                    .cornerRadius(10)
+                    .cornerRadius(12)
             }
             .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+            .padding(.vertical, 12)
         }
-        .background(Color.clear)
+        .background(Color(UIColor.systemBackground))
     }
 }

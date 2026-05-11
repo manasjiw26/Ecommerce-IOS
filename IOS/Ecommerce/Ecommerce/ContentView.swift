@@ -20,7 +20,7 @@ struct ContentView: View {
                 }
                 .tag(0)
             
-            NavigationView {
+            NavigationStack {
                 CartView()
             }
             .tabItem {
@@ -30,7 +30,7 @@ struct ContentView: View {
             .badge(cartManager.items.count)
             .tag(1)
 
-            NavigationView {
+            NavigationStack {
                 OrderListView()
                     .navigationTitle("Orders")
             }

@@ -38,7 +38,7 @@ struct ProductListView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 if viewModel.isLoading {
                     ScrollView {
@@ -233,3 +233,4 @@ struct CategoryChip: View {
         }
     }
 }
+
