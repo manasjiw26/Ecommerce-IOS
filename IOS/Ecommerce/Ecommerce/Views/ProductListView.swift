@@ -19,8 +19,7 @@ struct ProductListView: View {
     }
     
     var recommendedProducts: [Product] {
-        guard let targetCategory = recoEngine.mostViewedCategory else { return [] }
-        return Array(viewModel.products.filter { $0.category == targetCategory }.prefix(3))
+        return recoEngine.recommendedProducts
     }
     
     var filteredProducts: [Product] {

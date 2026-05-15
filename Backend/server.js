@@ -20,6 +20,7 @@ app.use('/cart', require('./routes/cart'));
 app.use('/orders', require('./routes/orders'));
 app.use('/payment', require('./routes/payment'));
 app.use('/auth', require('./routes/auth'));
+app.use('/ai', require('./routes/ai'));
 
 const { supabase } = require('./supabaseClient');
 

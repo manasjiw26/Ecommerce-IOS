@@ -4,6 +4,7 @@ import UIKit
 struct ProductDetailView: View {
     let product: Product
     @EnvironmentObject var cartManager: CartManager
+    @ObservedObject private var recoEngine = RecommendationEngine.shared
     private let imageHeight: CGFloat = 320
     
     var body: some View {
@@ -48,6 +49,42 @@ struct ProductDetailView: View {
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    
+                    if !recoEngine.recommendedProducts.isEmpty {
+                        Divider()
+                            .padding(.vertical, 10)
+                        
+                        Text("Recommended for You")
+                            .font(.headline)
+                            
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(recoEngine.recommendedProducts) { recProduct in
+                                    if recProduct.id != product.id {
+                                        NavigationLink(destination: ProductDetailView(product: recProduct)) {
+                                            VStack(alignment: .leading) {
+                                                if let imageUrlString = recProduct.imageUrl {
+                                                    CachedImageView(urlString: imageUrlString) { image in
+                                                        image.resizable().scaledToFill().frame(width: 120, height: 120).clipped().cornerRadius(10)
+                                                    } placeholder: {
+                                                        RoundedRectangle(cornerRadius: 10).fill(Color(.systemGray5)).frame(width: 120, height: 120).shimmer()
+                                                    }.id(imageUrlString)
+                                                }
+                                                Text(recProduct.name)
+                                                    .font(.subheadline)
+                                                    .lineLimit(1)
+                                                    .frame(width: 120, alignment: .leading)
+                                                Text("$\(String(format: "%.2f", recProduct.price))")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 .padding()
             }
@@ -58,9 +95,7 @@ struct ProductDetailView: View {
             addToCartBar
         }
         .onAppear {
-            if let category = product.category {
-                RecommendationEngine.shared.logView(for: category)
-            }
+            RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
         }
     }
 

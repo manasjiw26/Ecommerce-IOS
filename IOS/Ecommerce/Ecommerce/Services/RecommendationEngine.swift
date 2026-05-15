@@ -4,35 +4,74 @@ import Combine
 class RecommendationEngine: ObservableObject {
     static let shared = RecommendationEngine()
     
-    @Published var mostViewedCategory: String?
+    @Published var recommendedProducts: [Product] = []
     
-    private let saveKey = "UserCategoryViews"
+    private let deviceIdKey = "UserDeviceId"
     
-    init() {
-        loadMostViewed()
-    }
+    // Defaulting to localhost, assuming backend is running locally.
+    // If deployed, this should point to your Render/Railway backend URL.
+    private let baseURL = "http://localhost:3000/ai"
     
-    func logView(for category: String) {
-        var views = getViews()
-        views[category, default: 0] += 1
-        
-        if let encoded = try? JSONEncoder().encode(views) {
-            UserDefaults.standard.set(encoded, forKey: saveKey)
+    var deviceId: String {
+        if let id = UserDefaults.standard.string(forKey: deviceIdKey) {
+            return id
+        } else {
+            let newId = UUID().uuidString
+            UserDefaults.standard.set(newId, forKey: deviceIdKey)
+            return newId
         }
+    }
+    
+    private init() {
+        // Fetch initially
+        fetchRecommendations()
+    }
+    
+    func logEvent(productId: Int, eventType: String) {
+        guard let url = URL(string: "\(baseURL)/events") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        loadMostViewed()
+        let body: [String: Any] = [
+            "device_id": deviceId,
+            "product_id": productId,
+            "event_type": eventType
+        ]
+        
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error logging event: \(error)")
+            } else {
+                // If event was successfully logged, we can refresh the recommendations silently in background
+                self.fetchRecommendations()
+            }
+        }.resume()
     }
     
-    private func getViews() -> [String: Int] {
-        if let data = UserDefaults.standard.data(forKey: saveKey),
-           let decoded = try? JSONDecoder().decode([String: Int].self, from: data) {
-            return decoded
-        }
-        return [:]
-    }
-    
-    private func loadMostViewed() {
-        let views = getViews()
-        self.mostViewedCategory = views.max { a, b in a.value < b.value }?.key
+    func fetchRecommendations() {
+        guard let url = URL(string: "\(baseURL)/recommend") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = ["device_id": deviceId]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let data = data {
+                do {
+                    let decoder = JSONDecoder()
+                    let products = try decoder.decode([Product].self, from: data)
+                    DispatchQueue.main.async {
+                        self.recommendedProducts = products
+                    }
+                } catch {
+                    print("Failed to decode recommendations: \(error)")
+                }
+            }
+        }.resume()
     }
 }
