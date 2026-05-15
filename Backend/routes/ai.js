@@ -3,122 +3,150 @@ const router = express.Router();
 const { supabase } = require('../supabaseClient');
 const { GoogleGenAI } = require('@google/genai');
 
-// Initialize Gemini API
 const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY
 });
 
-// POST /ai/events
-// Logs a user event (view, add_to_cart, purchase)
+// Load transformers locally
+let pipeline;
+(async () => {
+    const transformers = await import('@xenova/transformers');
+    pipeline = transformers.pipeline;
+})();
+
+async function getLocalEmbedding(text) {
+    if (!pipeline) throw new Error("Embedder not loaded yet");
+    const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    const output = await embedder(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
+}
+
 router.post('/events', async (req, res) => {
     const { device_id, product_id, event_type } = req.body;
-
-    if (!device_id || !product_id || !event_type) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
+    if (!device_id || !product_id || !event_type) return res.status(400).json({ error: 'Missing required fields' });
 
     try {
-        const { error } = await supabase
-            .from('user_events')
-            .insert([{ device_id, product_id, event_type }]);
-
-        if (error) throw error;
-
+        await supabase.from('user_events').insert([{ device_id, product_id, event_type }]);
         res.json({ success: true });
     } catch (error) {
-        console.error('Error logging event:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// POST /ai/recommend
-// Generates personalized recommendations using Gemini
-router.post('/recommend', async (req, res) => {
-    const { device_id } = req.body;
-
-    if (!device_id) {
-        return res.status(400).json({ error: 'Missing device_id' });
-    }
+router.post('/search', async (req, res) => {
+    const { query } = req.body;
+    if (!query) return res.status(400).json({ error: 'Missing query' });
 
     try {
-        // 1. Fetch user's recent events
-        const { data: events, error: eventsError } = await supabase
-            .from('user_events')
+        // Run Local Embedding Generation
+        const queryEmbedding = await getLocalEmbedding(query);
+        
+        const { data, error } = await supabase.rpc('hybrid_search', {
+            query_text: query,
+            query_embedding: queryEmbedding,
+            match_count: 20
+        });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error('Local Search Failed. Falling back to Native Postgres ILIKE:', error.message);
+        
+        const fallbackQuery = `%${query}%`;
+        const { data: fallbackData, error: fallbackError } = await supabase
+            .from('products')
+            .select('*')
+            .or(`name.ilike.${fallbackQuery},description.ilike.${fallbackQuery},category.ilike.${fallbackQuery}`)
+            .order('stock', { ascending: false })
+            .limit(20);
+
+        if (fallbackError) {
+             return res.status(500).json({ error: fallbackError.message });
+        }
+        res.json(fallbackData || []);
+    }
+});
+
+router.post('/recommend', async (req, res) => {
+    const { device_id } = req.body;
+    if (!device_id) return res.status(400).json({ error: 'Missing device_id' });
+
+    try {
+        const { data: events } = await supabase.from('user_events')
             .select('product_id, event_type')
             .eq('device_id', device_id)
             .order('timestamp', { ascending: false })
-            .limit(20);
+            .limit(10);
 
-        if (eventsError) throw eventsError;
+        let candidates = [];
+        let recentHistoryText = "";
 
-        // 2. Fetch active product catalog
-        const { data: catalog, error: catalogError } = await supabase
-            .from('products')
-            .select('id, name, price, category, description');
-
-        if (catalogError) throw catalogError;
-
-        // Map event product IDs to actual product details for context
-        const recentHistory = events.map(e => {
-            const product = catalog.find(p => p.id === e.product_id);
-            return product ? `${e.event_type} - ${product.name} (${product.category})` : null;
-        }).filter(Boolean);
-
-        // 3. Construct Gemini Prompt
-        let promptText = "";
-        
-        if (recentHistory.length === 0) {
-            promptText = `You are an expert e-commerce shopping assistant for Williams Sonoma. The user has no history yet. 
-Here is our catalog:
-${JSON.stringify(catalog)}
-
-Pick 5 diverse, popular products from the catalog to recommend.
-Return ONLY a valid JSON array of objects, with each object containing "id" (number) and "reasoning" (a short string, e.g., "A great starting piece for your kitchen."). No other text or formatting.`;
+        if (!events || events.length === 0) {
+            const { data: popular } = await supabase.from('products').select('*').order('stock', { ascending: false }).limit(20);
+            candidates = popular || [];
         } else {
-            promptText = `You are an expert e-commerce shopping assistant for Williams Sonoma. 
-The user recently did the following actions:
-${recentHistory.join('\n')}
+            const productIds = events.map(e => e.product_id);
+            const { data: historyProducts } = await supabase.from('products').select('id, name, category').in('id', productIds);
+            
+            recentHistoryText = events.map(e => {
+                const p = historyProducts.find(prod => prod.id === e.product_id);
+                return p ? `${e.event_type}: ${p.name} (${p.category})` : null;
+            }).filter(Boolean).join('\n');
 
-Based on this behavior, look at our catalog and recommend 5 products they might want to buy next:
-${JSON.stringify(catalog)}
+            try {
+                // We still use Gemini 1.5 Flash for the actual generation, as it works perfectly!
+                const queryResponse = await ai.models.generateContent({
+                    model: 'gemini-1.5-flash',
+                    contents: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.`
+                });
+                const searchIntent = queryResponse.text.trim();
 
-Return ONLY a valid JSON array of objects, with each object containing "id" (number) and "reasoning" (a short, personalized 1-sentence explanation of why you recommend this based on their history, e.g., "Since you were looking at Cast Iron pans, this lid is a perfect match."). No other text or markdown formatting.`;
+                // Generate vector locally to match Supabase pgvector!
+                const queryEmbedding = await getLocalEmbedding(searchIntent);
+
+                const { data: searchResults } = await supabase.rpc('hybrid_search', {
+                    query_text: searchIntent,
+                    query_embedding: queryEmbedding,
+                    match_count: 20
+                });
+                candidates = searchResults || [];
+            } catch (aiError) {
+                console.error("AI Intent Generation Failed. Falling back to history categories.", aiError.message);
+                const categories = [...new Set(historyProducts.map(p => p.category))];
+                const { data: fallbackCandidates } = await supabase.from('products').select('*').in('category', categories).limit(20);
+                candidates = fallbackCandidates || [];
+            }
         }
 
-        // 4. Call Gemini
-        const response = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: promptText,
-            config: {
-                temperature: 0.2,
-                responseMimeType: "application/json"
-            }
-        });
+        if (candidates.length === 0) return res.json([]);
 
-        const textResponse = response.text;
-        
         let recommendedItems = [];
         try {
-            recommendedItems = JSON.parse(textResponse);
+            const finalPrompt = `You are an expert e-commerce assistant. Pick 5 diverse products from this list:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category})))}\n\nReturn ONLY a valid JSON array of objects with "id" (number) and "reasoning" (1-sentence pitch).`;
+            const response = await ai.models.generateContent({
+                model: 'gemini-1.5-flash',
+                contents: finalPrompt,
+                config: { temperature: 0.2, responseMimeType: "application/json" }
+            });
+            recommendedItems = JSON.parse(response.text);
         } catch(e) {
-            console.error("Failed to parse Gemini response:", textResponse);
-            return res.status(500).json({ error: "Failed to generate recommendations" });
+            console.error("Gemini Re-ranking Failed. Falling back to pure data.", e.message);
+            recommendedItems = candidates.slice(0, 5).map(c => ({
+                id: c.id,
+                reasoning: "Highly recommended for you based on our catalog."
+            }));
         }
 
-        // 5. Hydrate recommendations with full product details
         const fullRecommendations = recommendedItems.map(item => {
-            const productDetails = catalog.find(p => p.id === item.id);
+            const productDetails = candidates.find(p => p.id === item.id);
             if (!productDetails) return null;
-            return {
-                ...productDetails,
-                ai_reasoning: item.reasoning
-            };
+            return { ...productDetails, ai_reasoning: item.reasoning };
         }).filter(Boolean);
 
         res.json(fullRecommendations);
 
     } catch (error) {
-        console.error('Error in /ai/recommend:', error);
+        console.error('Critical Error in /ai/recommend:', error);
         res.status(500).json({ error: error.message });
     }
 });

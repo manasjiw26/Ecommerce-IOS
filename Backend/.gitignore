@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables - NEVER commit secrets
+.env
+.env.local
+.env.production
+
+# Local product images (hosted on Supabase Storage)
+product_images/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE artifacts
+.agents/
+.aider-desk/
+skills-lock.json
