@@ -1,78 +1,179 @@
+// ========== FILE: routes/cart.js ==========
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../supabaseClient');
 
+const STORAGE = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
+const fixImg = (p) => {
+    if (p?.image_url && !p.image_url.startsWith('http')) p.image_url = `${STORAGE}/${encodeURIComponent(p.image_url)}`;
+    return p;
+};
+
 // POST Add item to cart
 router.post('/', async (req, res) => {
-    const { user_id, product_id, quantity } = req.body;
-    
-    // First check if item already exists in cart
-    const { data: existingItem, error: fetchError } = await supabase
-        .from('cart_items')
-        .select('*')
-        .eq('user_id', user_id)
-        .eq('product_id', product_id)
-        .single();
-        
-    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 is not found
-        return res.status(500).json({ error: fetchError });
-    }
-    
-    let result;
-    if (existingItem) {
-        // Update quantity
-        result = await supabase
+    try {
+        const { user_id, product_id, quantity } = req.body;
+
+        const { data: existingItem, error: fetchError } = await supabase
             .from('cart_items')
-            .update({ quantity: existingItem.quantity + quantity })
-            .eq('id', existingItem.id)
-            .select();
-    } else {
-        // Insert new item
-        result = await supabase
-            .from('cart_items')
-            .insert([{ user_id, product_id, quantity }])
-            .select();
+            .select('*')
+            .eq('user_id', user_id)
+            .eq('product_id', product_id)
+            .single();
+
+        if (fetchError && fetchError.code !== 'PGRST116') {
+            return res.status(500).json({ error: fetchError.message || String(fetchError), code: 500 });
+        }
+
+        let result;
+        if (existingItem) {
+            result = await supabase
+                .from('cart_items')
+                .update({ quantity: Number(existingItem.quantity || 0) + Number(quantity || 0) })
+                .eq('id', existingItem.id)
+                .select();
+        } else {
+            result = await supabase.from('cart_items').insert([{ user_id, product_id, quantity }]).select();
+        }
+
+        if (result.error) return res.status(500).json({ error: result.error.message || String(result.error), code: 500 });
+        return res.json(result.data || []);
+    } catch (e) {
+        console.error('[POST /cart]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
     }
-    
-    if (result.error) {
-        return res.status(500).json({ error: result.error });
+});
+
+// POST /cart/save-for-later
+router.post('/save-for-later', async (req, res) => {
+    try {
+        const { device_id, product_id } = req.body;
+        if (!device_id || !product_id) return res.status(400).json({ error: 'device_id and product_id required', code: 400 });
+
+        const { data, error } = await supabase
+            .from('save_for_later')
+            .upsert([{ device_id, product_id }], { onConflict: 'device_id,product_id' })
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json(data);
+    } catch (e) {
+        console.error('[POST /cart/save-for-later]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
     }
-    
-    res.json(result.data);
+});
+
+// DELETE /cart/save-for-later
+router.delete('/save-for-later', async (req, res) => {
+    try {
+        const { device_id, product_id } = req.body;
+        if (!device_id || !product_id) return res.status(400).json({ error: 'device_id and product_id required', code: 400 });
+
+        const { error } = await supabase.from('save_for_later').delete().eq('device_id', device_id).eq('product_id', product_id);
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json({ success: true });
+    } catch (e) {
+        console.error('[DELETE /cart/save-for-later]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
+    }
+});
+
+// GET /cart/saved/:deviceId
+router.get('/saved/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const { data, error } = await supabase
+            .from('save_for_later')
+            .select('id, saved_at, products (*)')
+            .eq('device_id', deviceId)
+            .order('saved_at', { ascending: false });
+
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        const out = (data || []).map((row) => ({
+            id: row.id,
+            saved_at: row.saved_at,
+            product: row.products ? fixImg(row.products) : null
+        }));
+        return res.json(out);
+    } catch (e) {
+        console.error('[GET /cart/saved/:deviceId]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
+    }
+});
+
+// POST /cart/move-to-registry
+router.post('/move-to-registry', async (req, res) => {
+    try {
+        const { device_id, product_id, registry_id, quantity_requested, ai_reason } = req.body;
+        if (!device_id || !product_id || !registry_id) {
+            return res.status(400).json({ error: 'device_id, product_id, registry_id required', code: 400 });
+        }
+
+        const { data: product, error: pErr } = await supabase.from('products').select('id, price').eq('id', product_id).single();
+        if (pErr) return res.status(500).json({ error: pErr.message, code: 500 });
+
+        const { data: registryItem, error: rErr } = await supabase
+            .from('registry_items')
+            .insert([
+                {
+                    registry_id,
+                    product_id,
+                    quantity_requested: quantity_requested ?? 1,
+                    price_snapshot: Number(product?.price || 0),
+                    ai_reason: ai_reason || null
+                }
+            ])
+            .select()
+            .single();
+        if (rErr) return res.status(500).json({ error: rErr.message, code: 500 });
+
+        await supabase.from('save_for_later').delete().eq('device_id', device_id).eq('product_id', product_id);
+
+        return res.json({ success: true, registry_item: registryItem });
+    } catch (e) {
+        console.error('[POST /cart/move-to-registry]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
+    }
 });
 
 // GET Get user's cart
 router.get('/:userId', async (req, res) => {
-    const { userId } = req.params;
-    
-    const { data, error } = await supabase
-        .from('cart_items')
-        .select(`
-            id,
-            quantity,
-            products (*)
-        `)
-        .eq('user_id', userId);
-        
-    if (error) {
-        return res.status(500).json({ error });
+    try {
+        const { userId } = req.params;
+
+        const { data, error } = await supabase
+            .from('cart_items')
+            .select(`
+                id,
+                quantity,
+                products (*)
+            `)
+            .eq('user_id', userId);
+
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        const out = (data || []).map((row) => {
+            if (row.products) fixImg(row.products);
+            return row;
+        });
+        return res.json(out);
+    } catch (e) {
+        console.error('[GET /cart/:userId]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
     }
-    res.json(data);
 });
 
 // DELETE Remove from cart
 router.delete('/:itemId', async (req, res) => {
-    const { itemId } = req.params;
-    
-    const { data, error } = await supabase
-        .from('cart_items')
-        .delete()
-        .eq('id', itemId);
-        
-    if (error) {
-        return res.status(500).json({ error });
+    try {
+        const { itemId } = req.params;
+
+        const { error } = await supabase.from('cart_items').delete().eq('id', itemId);
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json({ message: 'Item removed from cart' });
+    } catch (e) {
+        console.error('[DELETE /cart/:itemId]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
     }
-    res.json({ message: 'Item removed from cart' });
 });
 
 module.exports = router;

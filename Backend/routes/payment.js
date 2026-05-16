@@ -49,7 +49,6 @@ router.post('/verify', async (req, res) => {
 
         if (isAuthentic) {
             // Payment successful
-            // TODO: Update your Supabase database with the order status here
             res.json({ message: "Payment Verified Successfully", payment_id: razorpay_payment_id });
         } else {
             res.status(400).json({ error: "Invalid Signature" });
