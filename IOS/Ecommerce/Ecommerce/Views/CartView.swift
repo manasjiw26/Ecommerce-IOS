@@ -2,7 +2,9 @@ import SwiftUI
 
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
+    @EnvironmentObject var productViewModel: ProductViewModel
     @StateObject private var occasionViewModel = OccasionViewModel()
+    @StateObject private var pairItWithViewModel = PairItWithViewModel()
     @State private var showingCheckout = false
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
@@ -30,10 +32,18 @@ struct CartView: View {
                     Text("Your cart is empty")
                         .font(.title2)
                         .foregroundColor(.secondary)
+                    
+                    Divider()
+                        .padding(.vertical)
+                    
+                    // Always show suggestions even when empty
+                    PairItWithSectionView(viewModel: pairItWithViewModel)
                 }
+                .padding()
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
+                        // Occasion section — original logic, untouched
                         if let occasion = occasionViewModel.currentOccasion {
                             NavigationLink(destination: OccasionSuggestionsView(occasion: occasion)) {
                                 OccasionCardView(occasion: occasion)
@@ -62,6 +72,11 @@ struct CartView: View {
                             .background(Color.orange.opacity(0.1))
                             .cornerRadius(10)
                         }
+
+                        Divider()
+                        
+                        // Might We Suggest section
+                        PairItWithSectionView(viewModel: pairItWithViewModel)
 
                         Divider()
 
@@ -109,13 +124,23 @@ struct CartView: View {
                 .environmentObject(cartManager)
         }
         .task {
-            await refreshStock()
+            // Priority 1: Detect Occasions
             occasionViewModel.detectOccasion(from: cartManager.items)
+            
+            // Priority 2: Load recommendations
+            pairItWithViewModel.generateRecommendations(from: cartManager.items, allProducts: productViewModel.products)
+            
+            // Priority 3: Stock check
+            await refreshStock()
         }
-        .onChange(of: cartManager.items.count) { _ in
-            Task { 
-                await refreshStock()
+        .onChange(of: cartManager.items.count) {
+            Task {
                 occasionViewModel.detectOccasion(from: cartManager.items)
+                pairItWithViewModel.generateRecommendations(
+                    from: cartManager.items,
+                    allProducts: productViewModel.products
+                )
+                await refreshStock()
             }
         }
     }

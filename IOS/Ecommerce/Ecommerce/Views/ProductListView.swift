@@ -170,8 +170,8 @@ struct ProductListView: View {
                             }
                         }
                     }
-                    .onChange(of: searchText) { newValue in
-                        if newValue.isEmpty {
+                    .onChange(of: searchText) {
+                        if searchText.isEmpty {
                             recoEngine.searchResults = []
                         }
                     }
