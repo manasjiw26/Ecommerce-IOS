@@ -20,7 +20,7 @@ class ProductViewModel: ObservableObject {
         while retryCount <= maxRetries {
             do {
                 let fetchedProducts = try await APIService.shared.fetchProducts()
-                self.products = fetchedProducts
+                self.products = MockDataService.shared.injectMockTags(to: fetchedProducts)
                 self.errorMessage = nil
                 break
             } catch {

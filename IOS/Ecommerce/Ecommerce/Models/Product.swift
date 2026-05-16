@@ -9,11 +9,13 @@ struct Product: Codable, Identifiable, Equatable {
     let category: String?
     let stock: Int?
     let aiReasoning: String?
+    let itemTag: String?
     
     enum CodingKeys: String, CodingKey {
         case id, name, price, description, category, stock
         case imageUrl = "image_url"
         case aiReasoning = "ai_reasoning"
+        case itemTag = "item_tag"
     }
 
     static func == (lhs: Product, rhs: Product) -> Bool {

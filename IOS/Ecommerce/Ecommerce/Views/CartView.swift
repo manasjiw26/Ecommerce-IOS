@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
+    @StateObject private var occasionViewModel = OccasionViewModel()
     @State private var showingCheckout = false
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
@@ -33,6 +34,14 @@ struct CartView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
+                        if let occasion = occasionViewModel.currentOccasion {
+                            NavigationLink(destination: OccasionSuggestionsView(occasion: occasion)) {
+                                OccasionCardView(occasion: occasion)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        
                         ForEach(cartManager.items) { item in
                             CartItemRow(
                                 item: item,
@@ -101,9 +110,13 @@ struct CartView: View {
         }
         .task {
             await refreshStock()
+            occasionViewModel.detectOccasion(from: cartManager.items)
         }
         .onChange(of: cartManager.items.count) { _ in
-            Task { await refreshStock() }
+            Task { 
+                await refreshStock()
+                occasionViewModel.detectOccasion(from: cartManager.items)
+            }
         }
     }
 
