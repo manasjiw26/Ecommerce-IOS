@@ -177,49 +177,59 @@ router.post('/events', async (req, res) => {
     }
 });
 
-router.post('/search', async (req, res) => {
-    const { query } = req.body;
-    if (!query) return res.status(400).json({ error: 'Missing query' });
-
-    try {
-        // Run Local Embedding Generation
-        const queryEmbedding = await getLocalEmbedding(query);
-        
-        // Complex RRF Hybrid Search with Weights
-        const { data, error } = await supabase.rpc('hybrid_search', {
-            query_text: query,
-            query_embedding: queryEmbedding,
-            match_count: 20,
-            fts_weight: 1.0,        // Complexity: Adjustable weights for keyword matching
-            semantic_weight: 1.5    // Complexity: Prioritize AI meaning slightly more
-        });
-
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        console.error('Complex Search Failed. Falling back to Native Postgres ILIKE:', error.message);
-        
-        // Sanitize query into keywords
-        const stopwords = ['can','you','find','me','some','show','looking','for','i','want','to','buy','do','have','the','a','an','is','are','of','in','on','with'];
-        const keywords = query.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
-        
-        // If no keywords found, fallback to original query
-        const searchTerms = keywords.length > 0 ? keywords : [query];
-        const orConditions = searchTerms.map(kw => `name.ilike.%${kw}%,description.ilike.%${kw}%,category.ilike.%${kw}%`).join(',');
-
-        const { data: fallbackData, error: fallbackError } = await supabase
-            .from('products')
-            .select('*')
-            .or(orConditions)
-            .order('stock', { ascending: false })
-            .limit(20);
-
-        if (fallbackError) {
-             return res.status(500).json({ error: fallbackError.message });
-        }
-        res.json(fallbackData || []);
-    }
-});
+/*
+ * LEGACY SEARCH (kept for reference; DO NOT ENABLE)
+ *
+ * Krish branch introduced a modular search pipeline which is now the canonical
+ * `/ai/search` implementation. We keep the older hybrid_search-based handler
+ * here, commented, so none of the previous logic is lost.
+ *
+ * If you ever need to compare results, consider re-enabling it under a new
+ * route like `/ai/search-legacy` instead of defining `/ai/search` twice.
+ */
+// router.post('/search', async (req, res) => {
+//     const { query } = req.body;
+//     if (!query) return res.status(400).json({ error: 'Missing query' });
+//
+//     try {
+//         // Run Local Embedding Generation
+//         const queryEmbedding = await getLocalEmbedding(query);
+//
+//         // Complex RRF Hybrid Search with Weights
+//         const { data, error } = await supabase.rpc('hybrid_search', {
+//             query_text: query,
+//             query_embedding: queryEmbedding,
+//             match_count: 20,
+//             fts_weight: 1.0,        // Complexity: Adjustable weights for keyword matching
+//             semantic_weight: 1.5    // Complexity: Prioritize AI meaning slightly more
+//         });
+//
+//         if (error) throw error;
+//         res.json(data);
+//     } catch (error) {
+//         console.error('Complex Search Failed. Falling back to Native Postgres ILIKE:', error.message);
+//
+//         // Sanitize query into keywords
+//         const stopwords = ['can','you','find','me','some','show','looking','for','i','want','to','buy','do','have','the','a','an','is','are','of','in','on','with'];
+//         const keywords = query.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
+//
+//         // If no keywords found, fallback to original query
+//         const searchTerms = keywords.length > 0 ? keywords : [query];
+//         const orConditions = searchTerms.map(kw => `name.ilike.%${kw}%,description.ilike.%${kw}%,category.ilike.%${kw}%`).join(',');
+//
+//         const { data: fallbackData, error: fallbackError } = await supabase
+//             .from('products')
+//             .select('*')
+//             .or(orConditions)
+//             .order('stock', { ascending: false })
+//             .limit(20);
+//
+//         if (fallbackError) {
+//              return res.status(500).json({ error: fallbackError.message });
+//         }
+//         res.json(fallbackData || []);
+//     }
+// });
 
 router.post('/recommend', async (req, res) => {
     const { device_id } = req.body;
