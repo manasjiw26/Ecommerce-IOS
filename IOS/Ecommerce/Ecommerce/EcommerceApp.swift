@@ -16,6 +16,7 @@ struct EcommerceApp: App {
                 ContentView()
                     .environmentObject(cartManager)
                     .environmentObject(productViewModel)
+                    .environmentObject(AuthSession.shared)
 
                 // Onboarding overlays on top when triggered
                 if showSignUp {

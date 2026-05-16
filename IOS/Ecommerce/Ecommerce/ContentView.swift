@@ -39,6 +39,13 @@ struct ContentView: View {
                 Text("Orders")
             }
             .tag(2)
+            
+            RegistryCoordinatorView()
+                .tabItem {
+                    Image(systemName: "gift.fill")
+                    Text("Registry")
+                }
+                .tag(3)
         }
         .tint(.primary)
         .task {

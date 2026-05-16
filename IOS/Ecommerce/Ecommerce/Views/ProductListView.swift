@@ -139,7 +139,7 @@ struct ProductListView: View {
                                     Image(systemName: "magnifyingglass")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                    Text("\(recoEngine.searchResults.count) results for "\(searchText)"")
+                                    Text("\(recoEngine.searchResults.count) results for \"\(searchText)\"")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

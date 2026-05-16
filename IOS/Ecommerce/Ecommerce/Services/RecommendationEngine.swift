@@ -47,7 +47,9 @@ class RecommendationEngine: ObservableObject {
                 print("Error logging event: \(error)")
             } else {
                 // If event was successfully logged, we can refresh the recommendations silently in background
-                self.fetchRecommendations()
+                Task {
+                    await self.fetchRecommendations()
+                }
             }
         }.resume()
     }
