@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,7 +10,31 @@ const path = require('path');
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10kb' })); // Payload size protection
+
+// ── Rate Limiting ─────────────────────────────────────────────────────────────
+// 100 requests per minute per IP for AI endpoints
+const aiLimiter = rateLimit({
+    windowMs: 60 * 1000,    // 1 minute
+    max: 100,               // limit each IP to 100 requests per window
+    standardHeaders: true,  // Return rate limit info in `RateLimit-*` headers
+    legacyHeaders: false,
+    message: { error: 'Too many requests. Please try again in a minute.' },
+    keyGenerator: (req) => {
+        // Use X-Forwarded-For if behind a proxy, otherwise use IP
+        return req.headers['x-forwarded-for'] || req.ip;
+    },
+});
+
+// Apply rate limiter to AI endpoints
+app.use('/ai', aiLimiter);
+
+// ── Request ID ────────────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+    req.requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    res.setHeader('X-Request-Id', req.requestId);
+    next();
+});
 
 // Serve static images
 app.use('/images', express.static(path.join(__dirname, 'product_images')));

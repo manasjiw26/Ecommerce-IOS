@@ -8,10 +8,11 @@ struct Product: Codable, Identifiable, Equatable {
     let imageUrl: String?
     let category: String?
     let stock: Int?
+    let tags: [String]?
     let aiReasoning: String?
     
     enum CodingKeys: String, CodingKey {
-        case id, name, price, description, category, stock
+        case id, name, price, description, category, stock, tags
         case imageUrl = "image_url"
         case aiReasoning = "ai_reasoning"
     }
