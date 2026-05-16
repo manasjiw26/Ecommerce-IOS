@@ -132,8 +132,7 @@ router.post('/recommend', async (req, res) => {
         } catch(e) {
             console.error("Gemini Re-ranking Failed. Falling back to pure data.", e.message);
             recommendedItems = candidates.slice(0, 5).map(c => ({
-                id: c.id,
-                reasoning: "Highly recommended for you based on our catalog."
+                id: c.id
             }));
         }
 
