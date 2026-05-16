@@ -45,45 +45,36 @@ extension View {
 // MARK: - Skeleton Product Card
 struct SkeletonProductCard: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Image placeholder
-            RoundedRectangle(cornerRadius: 12)
+        VStack(alignment: .leading, spacing: 0) {
+            // Image placeholder matching aspect ratio 1
+            Rectangle()
                 .fill(Color(.systemGray5))
-                .frame(height: 160)
+                .aspectRatio(1, contentMode: .fit)
                 .shimmer()
 
-            // Name placeholder — two lines
+            // Info section matching new padding of 10
             VStack(alignment: .leading, spacing: 6) {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 4)
                     .fill(Color(.systemGray5))
-                    .frame(height: 13)
+                    .frame(height: 12)
                     .shimmer()
 
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 4)
                     .fill(Color(.systemGray5))
-                    .frame(width: 80, height: 13)
+                    .frame(width: 80, height: 12)
                     .shimmer()
+
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(.systemGray5))
+                    .frame(width: 50, height: 12)
+                    .shimmer()
+                    .padding(.top, 2)
             }
-
-            // Price + button row
-            HStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(.systemGray5))
-                    .frame(width: 60, height: 16)
-                    .shimmer()
-
-                Spacer()
-
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray5))
-                    .frame(width: 36, height: 36)
-                    .shimmer()
-            }
+            .padding(10)
         }
-        .padding(12)
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-        .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
+        .background(Color(UIColor.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.07), radius: 8, x: 0, y: 2)
     }
 }
 

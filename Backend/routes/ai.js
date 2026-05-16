@@ -150,4 +150,52 @@ router.post('/recommend', async (req, res) => {
     }
 });
 
+// A convenient utility route to regenerate embeddings for ALL products in the database
+// You can just visit this URL in your browser after uploading a new CSV!
+router.get('/regenerate_embeddings', async (req, res) => {
+    try {
+        // 1. Fetch all products from Supabase
+        const { data: products, error: fetchError } = await supabase
+            .from('products')
+            .select('*');
+        
+        if (fetchError) throw fetchError;
+
+        let successCount = 0;
+        let errors = [];
+
+        // 2. Loop through every product and generate a fresh vector embedding
+        for (const p of products) {
+            try {
+                const textToEmbed = `${p.name} ${p.category} ${p.description || ''} ${(p.tags || []).join(' ')}`;
+                const embedding = await getLocalEmbedding(textToEmbed);
+
+                // 3. Save the new vector back to the product_embeddings table
+                const { error: upsertError } = await supabase
+                    .from('product_embeddings')
+                    .upsert({ 
+                        product_id: p.id, 
+                        embedding: embedding 
+                    }, { onConflict: 'product_id' });
+                
+                if (upsertError) throw upsertError;
+                successCount++;
+            } catch (err) {
+                console.error(`Failed to generate embedding for ${p.name}:`, err.message);
+                errors.push({ id: p.id, error: err.message });
+            }
+        }
+
+        res.json({
+            message: "Embeddings regeneration complete!",
+            total_processed: products.length,
+            success_count: successCount,
+            errors: errors
+        });
+    } catch (error) {
+        console.error('Critical Error in /regenerate_embeddings:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;
