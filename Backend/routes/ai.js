@@ -41,16 +41,19 @@ router.post('/search', async (req, res) => {
         // Run Local Embedding Generation
         const queryEmbedding = await getLocalEmbedding(query);
         
+        // Complex RRF Hybrid Search with Weights
         const { data, error } = await supabase.rpc('hybrid_search', {
             query_text: query,
             query_embedding: queryEmbedding,
-            match_count: 20
+            match_count: 20,
+            fts_weight: 1.0,        // Complexity: Adjustable weights for keyword matching
+            semantic_weight: 1.5    // Complexity: Prioritize AI meaning slightly more
         });
 
         if (error) throw error;
         res.json(data);
     } catch (error) {
-        console.error('Local Search Failed. Falling back to Native Postgres ILIKE:', error.message);
+        console.error('Complex Search Failed. Falling back to Native Postgres ILIKE:', error.message);
         
         const fallbackQuery = `%${query}%`;
         const { data: fallbackData, error: fallbackError } = await supabase
@@ -94,12 +97,11 @@ router.post('/recommend', async (req, res) => {
             }).filter(Boolean).join('\n');
 
             try {
-                // We still use Gemini 1.5 Flash for the actual generation, as it works perfectly!
-                const queryResponse = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash',
-                    contents: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.`
+                const response = await ai.models.generateContent({
+                    model: "gemini-1.5-flash",
+                    contents: [{ role: 'user', parts: [{ text: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.` }] }]
                 });
-                const searchIntent = queryResponse.text.trim();
+                const searchIntent = response.text().trim();
 
                 // Generate vector locally to match Supabase pgvector!
                 const queryEmbedding = await getLocalEmbedding(searchIntent);
@@ -107,13 +109,13 @@ router.post('/recommend', async (req, res) => {
                 const { data: searchResults } = await supabase.rpc('hybrid_search', {
                     query_text: searchIntent,
                     query_embedding: queryEmbedding,
-                    match_count: 20
+                    match_count: 5
                 });
                 candidates = searchResults || [];
             } catch (aiError) {
                 console.error("AI Intent Generation Failed. Falling back to history categories.", aiError.message);
                 const categories = [...new Set(historyProducts.map(p => p.category))];
-                const { data: fallbackCandidates } = await supabase.from('products').select('*').in('category', categories).limit(20);
+                const { data: fallbackCandidates } = await supabase.from('products').select('*').in('category', categories).limit(5);
                 candidates = fallbackCandidates || [];
             }
         }
@@ -122,13 +124,13 @@ router.post('/recommend', async (req, res) => {
 
         let recommendedItems = [];
         try {
-            const finalPrompt = `You are an expert e-commerce assistant. Pick 5 diverse products from this list:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category})))}\n\nReturn ONLY a valid JSON array of objects with "id" (number) and "reasoning" (1-sentence pitch).`;
+            const finalPrompt = `You are an expert e-commerce assistant. Here are the Top 5 absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
             const response = await ai.models.generateContent({
-                model: 'gemini-1.5-flash',
-                contents: finalPrompt,
-                config: { temperature: 0.2, responseMimeType: "application/json" }
+                model: "gemini-1.5-flash",
+                contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+                generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
             });
-            recommendedItems = JSON.parse(response.text);
+            recommendedItems = JSON.parse(response.text());
         } catch(e) {
             console.error("Gemini Re-ranking Failed. Falling back to pure data.", e.message);
             recommendedItems = candidates.slice(0, 5).map(c => ({

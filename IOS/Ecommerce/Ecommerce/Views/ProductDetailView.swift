@@ -204,9 +204,13 @@ struct ProductDetailView: View {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
         }
         .task {
-            isLoadingSimilar = true
-            similarProducts = await recoEngine.fetchSimilarProducts(to: product)
-            isLoadingSimilar = false
+            // Load similar products asynchronously
+            let results = await recoEngine.fetchSimilarProducts(to: product)
+            // Update state on the main thread safely
+            await MainActor.run {
+                self.similarProducts = results
+                self.isLoadingSimilar = false
+            }
         }
     }
 
