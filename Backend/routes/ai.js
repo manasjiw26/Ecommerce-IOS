@@ -52,11 +52,18 @@ router.post('/search', async (req, res) => {
     } catch (error) {
         console.error('Local Search Failed. Falling back to Native Postgres ILIKE:', error.message);
         
-        const fallbackQuery = `%${query}%`;
+        // Sanitize query into keywords
+        const stopwords = ['can','you','find','me','some','show','looking','for','i','want','to','buy','do','have','the','a','an','is','are','of','in','on','with'];
+        const keywords = query.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
+        
+        // If no keywords found, fallback to original query
+        const searchTerms = keywords.length > 0 ? keywords : [query];
+        const orConditions = searchTerms.map(kw => `name.ilike.%${kw}%,description.ilike.%${kw}%,category.ilike.%${kw}%`).join(',');
+
         const { data: fallbackData, error: fallbackError } = await supabase
             .from('products')
             .select('*')
-            .or(`name.ilike.${fallbackQuery},description.ilike.${fallbackQuery},category.ilike.${fallbackQuery}`)
+            .or(orConditions)
             .order('stock', { ascending: false })
             .limit(20);
 
@@ -96,9 +103,10 @@ router.post('/recommend', async (req, res) => {
             try {
                 // We still use Gemini 1.5 Flash for the actual generation, as it works perfectly!
                 const queryResponse = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash',
+                    model: 'gemini-2.5-flash',
                     contents: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.`
                 });
+                console.log('✅ Intent generated using Gemini (gemini-2.5-flash)');
                 const searchIntent = queryResponse.text.trim();
 
                 // Generate vector locally to match Supabase pgvector!
@@ -124,10 +132,11 @@ router.post('/recommend', async (req, res) => {
         try {
             const finalPrompt = `You are an expert e-commerce assistant. Pick 5 diverse products from this list:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category})))}\n\nReturn ONLY a valid JSON array of objects with "id" (number) and "reasoning" (1-sentence pitch).`;
             const response = await ai.models.generateContent({
-                model: 'gemini-1.5-flash',
+                model: 'gemini-2.5-flash',
                 contents: finalPrompt,
                 config: { temperature: 0.2, responseMimeType: "application/json" }
             });
+            console.log('✅ Re-ranking completed using Gemini (gemini-2.5-flash)');
             recommendedItems = JSON.parse(response.text);
         } catch(e) {
             console.error("Gemini Re-ranking Failed. Falling back to pure data.", e.message);

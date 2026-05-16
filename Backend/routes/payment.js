@@ -4,15 +4,24 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 require('dotenv').config();
 
-const razorpayInstance = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+let razorpayInstance;
+if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+    razorpayInstance = new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET
+    });
+} else {
+    console.warn("⚠️  Razorpay keys missing from .env — payments will fail.");
+}
 
 // Create Order endpoint
 router.post('/create-order', async (req, res) => {
     try {
         const { amount } = req.body; // Amount should be passed in normal currency value (e.g. 50.00)
+        
+        if (!razorpayInstance) {
+            return res.status(500).json({ error: "Razorpay is not configured on the backend." });
+        }
         
         const options = {
             amount: Math.round(amount * 100), // amount in smallest currency unit (cents/paise)

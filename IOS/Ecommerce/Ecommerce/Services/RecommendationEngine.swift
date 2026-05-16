@@ -11,7 +11,7 @@ class RecommendationEngine: ObservableObject {
     
     // Defaulting to localhost, assuming backend is running locally.
     // If deployed, this should point to your Render/Railway backend URL.
-    private let baseURL = "https://ecommerce-ios.onrender.com/ai"
+    private let baseURL = Config.apiBaseURL + "/ai"
     
     var deviceId: String {
         if let id = UserDefaults.standard.string(forKey: deviceIdKey) {

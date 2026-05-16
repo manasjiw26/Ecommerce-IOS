@@ -22,6 +22,7 @@ app.use('/payment', require('./routes/payment'));
 app.use('/auth', require('./routes/auth'));
 app.use('/ai', require('./routes/ai'));
 app.use('/registry', require('./routes/registry'));
+app.use('/chat', require('./routes/chat'));
 
 const { supabase } = require('./supabaseClient');
 
