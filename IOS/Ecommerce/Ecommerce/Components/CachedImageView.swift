@@ -50,7 +50,13 @@ class ImageLoader: ObservableObject {
         request.timeoutInterval = 30
         
         task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            if let error = error {
+            if let error = error as NSError? {
+                if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled {
+                    return // Expected when scrolling
+                }
+                if error.localizedDescription.lowercased().contains("cancelled") {
+                    return // Fallback check
+                }
                 print("❌ Image Load Error: \(error.localizedDescription) for: \(self?.urlString ?? "")")
                 return
             }

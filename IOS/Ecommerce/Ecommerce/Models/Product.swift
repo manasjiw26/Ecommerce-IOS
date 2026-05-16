@@ -8,10 +8,9 @@ struct Product: Codable, Identifiable, Equatable {
     let imageUrl: String?
     let category: String?
     let stock: Int?
-    let tags: [String]?
     let aiReasoning: String?
     let tags: [String]?
-
+    
     enum CodingKeys: String, CodingKey {
         case id, name, price, description, category, stock, tags
         case imageUrl = "image_url"
@@ -19,11 +18,10 @@ struct Product: Codable, Identifiable, Equatable {
     }
 
     static func == (lhs: Product, rhs: Product) -> Bool {
-        return lhs.id == rhs.id &&
-               lhs.name == rhs.name &&
-               lhs.price == rhs.price &&
-               lhs.imageUrl == rhs.imageUrl &&
+        return lhs.id == rhs.id && 
+               lhs.name == rhs.name && 
+               lhs.price == rhs.price && 
+               lhs.imageUrl == rhs.imageUrl && 
                lhs.stock == rhs.stock
     }
 }
-

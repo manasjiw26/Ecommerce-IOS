@@ -5,6 +5,8 @@ struct CartView: View {
     @State private var showingCheckout = false
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
+    @State private var occasion: String?
+    @State private var isDetectingOccasion = false
 
     var outOfStockItems: [CartItem] {
         cartManager.items.filter { item in
@@ -33,6 +35,44 @@ struct CartView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
+                        if isDetectingOccasion || occasion != nil {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "sparkles")
+                                        .foregroundColor(.purple)
+                                    Text("AI Occasion Insights")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.purple)
+                                }
+                                
+                                if isDetectingOccasion {
+                                    HStack {
+                                        Text("Detecting your shopping occasion...")
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                        ProgressView()
+                                    }
+                                } else if let occasion = occasion {
+                                    Text("Looks like you're shopping for a")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    Text(occasion)
+                                        .font(.title3)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.purple.opacity(0.1))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+
                         ForEach(cartManager.items) { item in
                             CartItemRow(
                                 item: item,
@@ -101,9 +141,13 @@ struct CartView: View {
         }
         .task {
             await refreshStock()
+            await fetchOccasion()
         }
-        .onChange(of: cartManager.items.count) {
-            Task { await refreshStock() }
+        .onChange(of: cartManager.items.count) { _ in
+            Task { 
+                await refreshStock()
+                await fetchOccasion()
+            }
         }
     }
 
@@ -120,6 +164,28 @@ struct CartView: View {
             }
         }
         isCheckingStock = false
+    }
+
+    private func fetchOccasion() async {
+        let allTags = cartManager.items.compactMap { $0.product.tags }.flatMap { $0 }
+        guard !allTags.isEmpty else {
+            await MainActor.run { occasion = nil }
+            return
+        }
+        
+        await MainActor.run { isDetectingOccasion = true }
+        
+        // TODO: Plug in your CoreML model here!
+        // Example: let detected = try? MyCoreMLModel(configuration: .init()).prediction(tags: allTags)
+        
+        // Simulating CoreML processing delay
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        await MainActor.run {
+            // For now, it's just a placeholder until your model is connected
+            self.occasion = "Special Occasion (CoreML Placeholder)"
+            self.isDetectingOccasion = false
+        }
     }
 }
 

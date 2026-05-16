@@ -5,6 +5,8 @@ struct ProductDetailView: View {
     let product: Product
     @EnvironmentObject var cartManager: CartManager
     @ObservedObject private var recoEngine = RecommendationEngine.shared
+    @State private var similarProducts: [Product] = []
+    @State private var isLoadingSimilar = true
     private let imageHeight: CGFloat = 340
     
     var body: some View {
@@ -93,7 +95,28 @@ struct ProductDetailView: View {
                     }
                     
                     // MARK: — Recommendations Carousel
-                    if !recoEngine.recommendedProducts.filter({ $0.id != product.id }).isEmpty {
+                    if isLoadingSimilar {
+                        Divider().padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                    .font(.subheadline)
+                                Text("Similar Products")
+                                    .font(.headline)
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 14) {
+                                    ForEach(0..<3) { _ in
+                                        Rectangle()
+                                            .fill(Color(.systemGray5))
+                                            .frame(width: 130, height: 180)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                                            .shimmer()
+                                    }
+                                }
+                            }
+                        }
+                    } else if !similarProducts.isEmpty {
                         Divider()
                             .padding(.top, 4)
                         
@@ -101,69 +124,67 @@ struct ProductDetailView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .font(.subheadline)
-                                Text("You Might Also Like")
+                                Text("Similar Products")
                                     .font(.headline)
                             }
                             
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 14) {
-                                    ForEach(recoEngine.recommendedProducts) { recProduct in
-                                        if recProduct.id != product.id {
-                                            NavigationLink(destination: ProductDetailView(product: recProduct)) {
-                                                VStack(alignment: .leading, spacing: 0) {
-                                                    ZStack(alignment: .topLeading) {
-                                                        if let imageUrlString = recProduct.imageUrl {
-                                                            CachedImageView(urlString: imageUrlString) { image in
-                                                                image.resizable().scaledToFill()
-                                                                    .frame(width: 130, height: 130)
-                                                                    .clipped()
-                                                            } placeholder: {
-                                                                Rectangle().fill(Color(.systemGray5))
-                                                                    .frame(width: 130, height: 130)
-                                                                    .shimmer()
-                                                            }
-                                                            .id(imageUrlString)
+                                    ForEach(similarProducts) { recProduct in
+                                        NavigationLink(destination: ProductDetailView(product: recProduct)) {
+                                            VStack(alignment: .leading, spacing: 0) {
+                                                ZStack(alignment: .topLeading) {
+                                                    if let imageUrlString = recProduct.imageUrl {
+                                                        CachedImageView(urlString: imageUrlString) { image in
+                                                            image.resizable().scaledToFill()
+                                                                .frame(width: 130, height: 130)
+                                                                .clipped()
+                                                        } placeholder: {
+                                                            Rectangle().fill(Color(.systemGray5))
+                                                                .frame(width: 130, height: 130)
+                                                                .shimmer()
                                                         }
-                                                        
-                                                        if recProduct.aiReasoning != nil {
-                                                            Image(systemName: "sparkles")
-                                                                .font(.system(size: 10, weight: .bold))
-                                                                .foregroundColor(.white)
-                                                                .padding(6)
-                                                                .background(Color.black.opacity(0.7))
-                                                                .clipShape(Circle())
-                                                                .padding(6)
-                                                        }
+                                                        .id(imageUrlString)
                                                     }
-                                                    .frame(width: 130, height: 130)
-                                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                                     
-                                                    VStack(alignment: .leading, spacing: 3) {
-                                                        Text(recProduct.name)
-                                                            .font(.caption)
-                                                            .fontWeight(.medium)
+                                                    if recProduct.aiReasoning != nil {
+                                                        Image(systemName: "sparkles")
+                                                            .font(.system(size: 10, weight: .bold))
+                                                            .foregroundColor(.white)
+                                                            .padding(6)
+                                                            .background(Color.black.opacity(0.7))
+                                                            .clipShape(Circle())
+                                                            .padding(6)
+                                                    }
+                                                }
+                                                .frame(width: 130, height: 130)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                
+                                                VStack(alignment: .leading, spacing: 3) {
+                                                    Text(recProduct.name)
+                                                        .font(.caption)
+                                                        .fontWeight(.medium)
+                                                        .lineLimit(2)
+                                                        .frame(width: 130, alignment: .leading)
+                                                    Text("$\(String(format: "%.2f", recProduct.price))")
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                    
+                                                    if let reasoning = recProduct.aiReasoning {
+                                                        Text(reasoning)
+                                                            .font(.caption2)
+                                                            .foregroundColor(.secondary)
+                                                            .italic()
                                                             .lineLimit(2)
                                                             .frame(width: 130, alignment: .leading)
-                                                        Text("$\(String(format: "%.2f", recProduct.price))")
-                                                            .font(.caption)
-                                                            .foregroundColor(.secondary)
-                                                        
-                                                        if let reasoning = recProduct.aiReasoning {
-                                                            Text(reasoning)
-                                                                .font(.caption2)
-                                                                .foregroundColor(.secondary)
-                                                                .italic()
-                                                                .lineLimit(2)
-                                                                .frame(width: 130, alignment: .leading)
-                                                                .padding(.top, 1)
-                                                        }
+                                                            .padding(.top, 1)
                                                     }
-                                                    .padding(.top, 8)
                                                 }
-                                                .frame(width: 130)
+                                                .padding(.top, 8)
                                             }
-                                            .buttonStyle(PlainButtonStyle())
+                                            .frame(width: 130)
                                         }
+                                        .buttonStyle(PlainButtonStyle())
                                     }
                                 }
                                 .padding(.bottom, 4)
@@ -181,6 +202,15 @@ struct ProductDetailView: View {
         }
         .onAppear {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
+        }
+        .task {
+            // Load similar products asynchronously
+            let results = await recoEngine.fetchSimilarProducts(to: product)
+            // Update state on the main thread safely
+            await MainActor.run {
+                self.similarProducts = results
+                self.isLoadingSimilar = false
+            }
         }
     }
 

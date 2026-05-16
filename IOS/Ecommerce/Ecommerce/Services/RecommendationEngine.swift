@@ -9,9 +9,8 @@ class RecommendationEngine: ObservableObject {
     
     private let deviceIdKey = "UserDeviceId"
     
-    // Defaulting to localhost, assuming backend is running locally.
-    // If deployed, this should point to your Render/Railway backend URL.
-    private let baseURL = "https://ecommerce-ios.onrender.com/ai"
+    // Uses the shared config URL (change in Config.swift to test locally)
+    private let baseURL = "\(Config.apiBaseURL)/ai"
     
     var deviceId: String {
         if let id = UserDefaults.standard.string(forKey: deviceIdKey) {
@@ -90,5 +89,30 @@ class RecommendationEngine: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    func fetchSimilarProducts(to product: Product) async -> [Product] {
+        guard let url = URL(string: "\(baseURL)/search") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let query: String
+        if let tags = product.tags, !tags.isEmpty {
+            query = tags.joined(separator: " ")
+        } else {
+            query = product.category ?? product.name
+        }
+        let body: [String: Any] = ["query": query]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let products = try JSONDecoder().decode([Product].self, from: data)
+            return products.filter { $0.id != product.id }
+        } catch {
+            print("❌ Failed to fetch similar products: \(error)")
+            return []
+        }
     }
 }
