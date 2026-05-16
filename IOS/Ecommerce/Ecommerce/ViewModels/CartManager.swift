@@ -2,11 +2,15 @@ import Foundation
 import Combine
 import SwiftUI
 
-struct CartItem: Identifiable, Codable {
+struct CartItem: Identifiable, Codable, Equatable {
     var id = UUID()
     var backendId: Int?
     let product: Product
     var quantity: Int
+
+    static func == (lhs: CartItem, rhs: CartItem) -> Bool {
+        lhs.product.id == rhs.product.id && lhs.quantity == rhs.quantity
+    }
 }
 
 @MainActor
@@ -84,6 +88,7 @@ class CartManager: ObservableObject {
                 }
             }
         }
+        RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_add")
         saveCart()
     }
     
@@ -111,6 +116,7 @@ class CartManager: ObservableObject {
                     }
                 }
             }
+            RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
             saveCart()
         }
     }
@@ -130,6 +136,7 @@ class CartManager: ObservableObject {
     private func loadCart() {
         if let data = UserDefaults.standard.data(forKey: saveKey),
            let decoded = try? JSONDecoder().decode([CartItem].self, from: data) {
+            
             items = decoded
         }
     }

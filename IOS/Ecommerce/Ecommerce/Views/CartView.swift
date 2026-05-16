@@ -2,6 +2,9 @@ import SwiftUI
 
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
+    @EnvironmentObject var productViewModel: ProductViewModel
+    @StateObject private var occasionViewModel = OccasionViewModel()
+    @StateObject private var pairItWithViewModel = PairItWithViewModel()
     @State private var showingCheckout = false
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
@@ -31,47 +34,64 @@ struct CartView: View {
                     Text("Your cart is empty")
                         .font(.title2)
                         .foregroundColor(.secondary)
+                    
+                    Divider()
+                        .padding(.vertical)
+                    
+                    // Always show suggestions even when empty
+                    PairItWithSectionView(viewModel: pairItWithViewModel)
                 }
+                .padding()
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
-                        if isDetectingOccasion || occasion != nil {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Image(systemName: "sparkles")
-                                        .foregroundColor(.purple)
-                                    Text("AI Occasion Insights")
-                                        .font(.caption)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.purple)
-                                }
-                                
-                                if isDetectingOccasion {
-                                    HStack {
-                                        Text("Detecting your shopping occasion...")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        ProgressView()
-                                    }
-                                } else if let occasion = occasion {
-                                    Text("Looks like you're shopping for a")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                    Text(occasion)
-                                        .font(.title3)
-                                        .fontWeight(.bold)
-                                }
+                        // Occasion section — original logic, untouched
+                        if let occasion = occasionViewModel.currentOccasion {
+                            NavigationLink(destination: OccasionSuggestionsView(occasion: occasion)) {
+                                OccasionCardView(occasion: occasion)
                             }
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.purple.opacity(0.1))
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.purple.opacity(0.3), lineWidth: 1)
-                            )
+                            .buttonStyle(PlainButtonStyle())
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
+                        
+                        // Legacy/experimental "occasion insight" UI (kept commented so nothing is lost).
+                        // if isDetectingOccasion || occasion != nil {
+                        //     VStack(alignment: .leading, spacing: 8) {
+                        //         HStack {
+                        //             Image(systemName: "sparkles")
+                        //                 .foregroundColor(.purple)
+                        //             Text("AI Occasion Insights")
+                        //                 .font(.caption)
+                        //                 .fontWeight(.bold)
+                        //                 .foregroundColor(.purple)
+                        //         }
+                        //
+                        //         if isDetectingOccasion {
+                        //             HStack {
+                        //                 Text("Detecting your shopping occasion...")
+                        //                     .font(.subheadline)
+                        //                     .foregroundColor(.secondary)
+                        //                 Spacer()
+                        //                 ProgressView()
+                        //             }
+                        //         } else if let occasion = occasion {
+                        //             Text("Looks like you're shopping for a")
+                        //                 .font(.subheadline)
+                        //                 .foregroundColor(.secondary)
+                        //             Text(occasion)
+                        //                 .font(.title3)
+                        //                 .fontWeight(.bold)
+                        //         }
+                        //     }
+                        //     .padding()
+                        //     .frame(maxWidth: .infinity, alignment: .leading)
+                        //     .background(Color.purple.opacity(0.1))
+                        //     .cornerRadius(12)
+                        //     .overlay(
+                        //         RoundedRectangle(cornerRadius: 12)
+                        //             .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                        //     )
+                        // }
 
                         ForEach(cartManager.items) { item in
                             CartItemRow(
@@ -93,6 +113,11 @@ struct CartView: View {
                             .background(Color.orange.opacity(0.1))
                             .cornerRadius(10)
                         }
+
+                        Divider()
+                        
+                        // Might We Suggest section
+                        PairItWithSectionView(viewModel: pairItWithViewModel)
 
                         Divider()
 
@@ -140,11 +165,20 @@ struct CartView: View {
                 .environmentObject(cartManager)
         }
         .task {
+            // Priority 1: Detect Occasions (untouched)
+            occasionViewModel.detectOccasion(from: cartManager.items)
+
+            // Priority 2: Fetch AI recommendations from backend
+            pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
+
+            // Priority 3: Stock check
             await refreshStock()
             await fetchOccasion()
         }
-        .onChange(of: cartManager.items.count) { _ in
-            Task { 
+        .onChange(of: cartManager.items) { _ in
+            Task {
+                occasionViewModel.detectOccasion(from: cartManager.items)
+                pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
                 await refreshStock()
                 await fetchOccasion()
             }

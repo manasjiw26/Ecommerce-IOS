@@ -11,4 +11,7 @@ struct Config {
     #else
     static let apiBaseURL = "https://ecommerce-ios.onrender.com"
     #endif
+    
+    // Legacy placeholder from an older branch; kept commented so nothing is lost.
+    // static let geminiAPIKey = "YOUR_GEMINI_API_KEY_HERE"
 }

@@ -140,8 +140,8 @@ struct ProductListView: View {
                             }
                         }
                     }
-                    .onChange(of: searchText) { newValue in
-                        if newValue.isEmpty {
+                    .onChange(of: searchText) {
+                        if searchText.isEmpty {
                             recoEngine.searchResults = []
                         }
                     }
@@ -251,8 +251,11 @@ struct ProductCardView: View {
                 Text("$\(String(format: "%.2f", product.price))")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                
+                Spacer(minLength: 0)
             }
             .padding(10)
+            .frame(height: 80, alignment: .topLeading)
         }
         .background(Color(UIColor.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
