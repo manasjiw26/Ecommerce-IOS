@@ -59,7 +59,7 @@ class RegistryViewModel: ObservableObject {
         defer { isLoading = false }
         
         do {
-            let newItem = try await RegistryService.shared.addItemToRegistry(registryId: registry.id, productId: productId)
+            _ = try await RegistryService.shared.addItemToRegistry(registryId: registry.id, productId: productId)
             // Re-fetch items to get the full product join
             self.registryItems = try await RegistryService.shared.fetchRegistryItems(registryId: registry.id)
         } catch {

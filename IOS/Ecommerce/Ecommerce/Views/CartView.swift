@@ -102,7 +102,7 @@ struct CartView: View {
         .task {
             await refreshStock()
         }
-        .onChange(of: cartManager.items.count) { _ in
+        .onChange(of: cartManager.items.count) {
             Task { await refreshStock() }
         }
     }

@@ -2,16 +2,15 @@ import SwiftUI
 
 struct ProductListView: View {
     @EnvironmentObject private var viewModel: ProductViewModel
+    @StateObject private var searchViewModel = SearchViewModel()
     
     let columns = [
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
     
-    @State private var searchText = ""
-    @State private var selectedCategory: String? = nil
     @State private var showProfile = false
-    @State private var isSearching = false
+    @State private var showFilters = false
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @StateObject private var visualVM = VisualSearchViewModel()
     
@@ -24,25 +23,16 @@ struct ProductListView: View {
         return recoEngine.recommendedProducts
     }
     
-    var filteredProducts: [Product] {
-        var result = viewModel.products
-        
-        if let category = selectedCategory {
-            result = result.filter { $0.category == category }
-        }
-        
-        if !searchText.isEmpty {
-            if !recoEngine.searchResults.isEmpty {
-                if let category = selectedCategory {
-                    return recoEngine.searchResults.filter { $0.category == category }
-                }
-                return recoEngine.searchResults
-            } else {
-                result = result.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    var displayedProducts: [Product] {
+        if searchViewModel.hasSearched {
+            return searchViewModel.searchResults
+        } else {
+            var result = viewModel.products
+            if let category = searchViewModel.selectedCategory {
+                result = result.filter { $0.category == category }
             }
+            return result
         }
-        
-        return result
     }
     
     var body: some View {
@@ -50,7 +40,7 @@ struct ProductListView: View {
             ZStack {
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
                 
-                if viewModel.isLoading {
+                if viewModel.isLoading || searchViewModel.isSearching {
                     ScrollView {
                         VStack(spacing: 0) {
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -77,30 +67,25 @@ struct ProductListView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.primary)
                     }
+                } else if searchViewModel.hasSearched && searchViewModel.searchResults.isEmpty {
+                    ScrollView {
+                        SearchEmptyStateView(query: searchViewModel.searchText)
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-
-                            // MARK: — Custom Search Bar
+                            
+                            // MARK: — Custom Search Bar (with Visual Search)
                             HStack(spacing: 8) {
                                 Image(systemName: "magnifyingglass")
                                     .foregroundColor(.secondary)
                                     .font(.system(size: 15))
 
-                                TextField("Search products, styles, or moods…", text: $searchText)
+                                TextField("Search products, styles, or moods…", text: $searchViewModel.searchText)
                                     .font(.system(size: 15))
                                     .submitLabel(.search)
                                     .onSubmit {
-                                        if !searchText.isEmpty {
-                                            isSearching = true
-                                            recoEngine.searchProducts(query: searchText)
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                                isSearching = false
-                                            }
-                                        }
-                                    }
-                                    .onChange(of: searchText) { newValue in
-                                        if newValue.isEmpty { recoEngine.searchResults = [] }
+                                        searchViewModel.performSearch(query: searchViewModel.searchText)
                                     }
 
                                 // Camera button
@@ -114,10 +99,9 @@ struct ProductListView: View {
                                 .buttonStyle(ScaleButtonStyle())
 
                                 // Clear button
-                                if !searchText.isEmpty {
+                                if !searchViewModel.searchText.isEmpty {
                                     Button {
-                                        searchText = ""
-                                        recoEngine.searchResults = []
+                                        searchViewModel.searchText = ""
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .foregroundColor(.secondary)
@@ -134,16 +118,34 @@ struct ProductListView: View {
                             .padding(.top, 8)
                             .padding(.bottom, 4)
 
-                            // MARK: — Category Chips
-                            if !categories.isEmpty {
+                            // MARK: — Filters/Categories Chips
+                            if searchViewModel.hasSearched {
+                                if searchViewModel.selectedCategory != nil || searchViewModel.maxPrice != nil || !searchViewModel.selectedTags.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 8) {
+                                            if let cat = searchViewModel.selectedCategory {
+                                                SearchChipView(title: cat, isSelected: true) { searchViewModel.selectedCategory = nil }
+                                            }
+                                            if let price = searchViewModel.maxPrice {
+                                                SearchChipView(title: "Under $\(Int(price))", isSelected: true) { searchViewModel.maxPrice = nil }
+                                            }
+                                            ForEach(Array(searchViewModel.selectedTags), id: \.self) { tag in
+                                                SearchChipView(title: tag.capitalized, isSelected: true) { searchViewModel.toggleTag(tag) }
+                                            }
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 12)
+                                    }
+                                }
+                            } else if !categories.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 8) {
-                                        CategoryChip(title: "All", isSelected: selectedCategory == nil) {
-                                            withAnimation(.spring(response: 0.3)) { selectedCategory = nil }
+                                        CategoryChip(title: "All", isSelected: searchViewModel.selectedCategory == nil) {
+                                            withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = nil }
                                         }
                                         ForEach(categories, id: \.self) { category in
-                                            CategoryChip(title: category, isSelected: selectedCategory == category) {
-                                                withAnimation(.spring(response: 0.3)) { selectedCategory = category }
+                                            CategoryChip(title: category, isSelected: searchViewModel.selectedCategory == category) {
+                                                withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = category }
                                             }
                                         }
                                     }
@@ -153,7 +155,7 @@ struct ProductListView: View {
                             }
                             
                             // MARK: — AI Recommendation Carousel
-                            if searchText.isEmpty && selectedCategory == nil && !recommendedProducts.isEmpty {
+                            if !searchViewModel.hasSearched && searchViewModel.selectedCategory == nil && !recommendedProducts.isEmpty {
                                 VStack(alignment: .leading, spacing: 10) {
                                     HStack(alignment: .center, spacing: 8) {
                                         Image(systemName: "sparkles")
@@ -188,14 +190,22 @@ struct ProductListView: View {
                             }
                             
                             // MARK: — Search Results Header
-                            if !searchText.isEmpty && !recoEngine.searchResults.isEmpty {
+                            if searchViewModel.hasSearched {
                                 HStack {
                                     Image(systemName: "magnifyingglass")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                    Text("\(recoEngine.searchResults.count) results for \"\(searchText)\"")
+                                    Text("\(searchViewModel.searchResults.count) results for \"\(searchViewModel.searchText)\"")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
+                                    Spacer()
+                                    Button(action: { showFilters = true }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                            Text("Filter")
+                                        }
+                                        .font(.caption)
+                                    }
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.bottom, 8)
@@ -203,15 +213,25 @@ struct ProductListView: View {
                             
                             // MARK: — Product Grid
                             LazyVGrid(columns: columns, spacing: 16) {
-                                ForEach(filteredProducts) { product in
+                                ForEach(displayedProducts) { product in
                                     NavigationLink(destination: ProductDetailView(product: product)) {
                                         ProductCardView(product: product)
+                                            .onAppear {
+                                                if product.id == displayedProducts.last?.id {
+                                                    searchViewModel.loadMore()
+                                                }
+                                            }
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                 }
                             }
                             .padding(.horizontal, 12)
                             .padding(.bottom, 16)
+                            
+                            if searchViewModel.hasMoreResults && searchViewModel.hasSearched {
+                                ProgressView()
+                                    .padding(.vertical, 20)
+                            }
                         }
                     }
                     .refreshable {
@@ -219,31 +239,27 @@ struct ProductListView: View {
                         await recoEngine.fetchRecommendations()
                     }
                     .transition(.opacity.animation(.easeIn(duration: 0.3)))
-                    
-                    // Search loading overlay
-                    if isSearching {
-                        VStack {
-                            Spacer()
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Searching with AI…")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(.regularMaterial)
-                            .clipShape(Capsule())
-                            .shadow(color: .black.opacity(0.1), radius: 10)
-                            .padding(.bottom, 24)
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading || searchViewModel.isSearching)
+            .navigationTitle("Williams Sonoma")
+            .navigationBarTitleDisplayMode(.large)
+            // Note: We use the custom search bar instead of .searchable to support the camera button
+            .searchSuggestions {
+                if let response = searchViewModel.autocompleteResponse {
+                    if searchViewModel.searchText.isEmpty {
+                        TrendingSearchesView(trending: response.trending) { term in
+                            searchViewModel.searchText = term
+                            searchViewModel.performSearch(query: term)
+                        }
+                    } else {
+                        SearchSuggestionView(response: response) { term in
+                            searchViewModel.searchText = term
+                            searchViewModel.performSearch(query: term)
                         }
                     }
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading)
-            .navigationTitle("Williams Sonoma")
-            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showProfile = true }) {
@@ -259,6 +275,9 @@ struct ProductListView: View {
                         NotificationCenter.default.post(name: .userDidLogout, object: nil)
                     })
                 }
+            }
+            .sheet(isPresented: $showFilters) {
+                SearchFilterSheet(viewModel: searchViewModel)
             }
             // Visual search results sheet
             .sheet(isPresented: $visualVM.showResults) {
