@@ -2,16 +2,16 @@ import SwiftUI
 
 struct ProductListView: View {
     @EnvironmentObject private var viewModel: ProductViewModel
+    @StateObject private var searchViewModel = SearchViewModel()
+    @StateObject private var visualVM = VisualSearchViewModel()
     
     let columns = [
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
     
-    @State private var searchText = ""
-    @State private var selectedCategory: String? = nil
     @State private var showProfile = false
-    @State private var isSearching = false
+    @State private var showFilters = false
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     
     var categories: [String] {
@@ -23,25 +23,16 @@ struct ProductListView: View {
         return recoEngine.recommendedProducts
     }
     
-    var filteredProducts: [Product] {
-        var result = viewModel.products
-        
-        if let category = selectedCategory {
-            result = result.filter { $0.category == category }
-        }
-        
-        if !searchText.isEmpty {
-            if !recoEngine.searchResults.isEmpty {
-                if let category = selectedCategory {
-                    return recoEngine.searchResults.filter { $0.category == category }
-                }
-                return recoEngine.searchResults
-            } else {
-                result = result.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    var displayedProducts: [Product] {
+        if searchViewModel.hasSearched {
+            return searchViewModel.searchResults
+        } else {
+            var result = viewModel.products
+            if let category = searchViewModel.selectedCategory {
+                result = result.filter { $0.category == category }
             }
+            return result
         }
-        
-        return result
     }
     
     var body: some View {
@@ -49,7 +40,7 @@ struct ProductListView: View {
             ZStack {
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
                 
-                if viewModel.isLoading {
+                if viewModel.isLoading || searchViewModel.isSearching {
                     ScrollView {
                         VStack(spacing: 0) {
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -76,20 +67,129 @@ struct ProductListView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.primary)
                     }
+                } else if searchViewModel.hasSearched && searchViewModel.searchResults.isEmpty {
+                    ScrollView {
+                        SearchEmptyStateView(query: searchViewModel.searchText)
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             
-                            // MARK: — Category Chips
-                            if !categories.isEmpty {
+                            // MARK: — Search Bar (Krish search pipeline) + Camera (NR visual search)
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                    .font(.system(size: 15))
+                                
+                                TextField("Search products, styles, or moods…", text: $searchViewModel.searchText)
+                                    .font(.system(size: 15))
+                                    .submitLabel(.search)
+                                    .onSubmit {
+                                        searchViewModel.performSearch(query: searchViewModel.searchText)
+                                    }
+                                
+                                Button {
+                                    visualVM.showSourceDialog = true
+                                } label: {
+                                    Image(systemName: "camera.viewfinder")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.primary)
+                                }
+                                .buttonStyle(ScaleButtonStyle())
+                                
+                                Button {
+                                    showFilters = true
+                                } label: {
+                                    Image(systemName: "slider.horizontal.3")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.primary)
+                                }
+                                .buttonStyle(ScaleButtonStyle())
+                                
+                                if !searchViewModel.searchText.isEmpty {
+                                    Button {
+                                        searchViewModel.searchText = ""
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                            .font(.system(size: 15))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color(UIColor.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, 8)
+
+                            /*
+                             Legacy search UI (kept commented so nothing is lost):
+                             - Used SwiftUI `.searchable` + `RecommendationEngine.searchProducts(query:)`
+                             - Did not support autocomplete, recent/trending, server-side filters, or pagination
+                             */
+                            // .searchable(text: $searchText, prompt: "Search products, styles, or moods…")
+                            // .onSubmit(of: .search) { recoEngine.searchProducts(query: searchText) }
+                            
+                            // MARK: — Suggestions (recent/trending/products/categories)
+                            if let response = searchViewModel.autocompleteResponse {
+                                if searchViewModel.searchText.isEmpty {
+                                    TrendingSearchesView(trending: response.trending) { term in
+                                        searchViewModel.searchText = term
+                                        searchViewModel.performSearch(query: term)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 8)
+                                } else {
+                                    SearchSuggestionView(response: response) { term in
+                                        searchViewModel.searchText = term
+                                        searchViewModel.performSearch(query: term)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 8)
+                                }
+                            }
+                            
+                            // MARK: — Filter Chips (only when searching)
+                            if searchViewModel.hasSearched {
+                                if searchViewModel.selectedCategory != nil || searchViewModel.maxPrice != nil || !searchViewModel.selectedTags.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 8) {
+                                            if let cat = searchViewModel.selectedCategory {
+                                                SearchChipView(title: cat, isSelected: true) {
+                                                    searchViewModel.selectedCategory = nil
+                                                    searchViewModel.applyFilters()
+                                                }
+                                            }
+                                            if let price = searchViewModel.maxPrice {
+                                                SearchChipView(title: "Under $\(Int(price))", isSelected: true) {
+                                                    searchViewModel.maxPrice = nil
+                                                    searchViewModel.applyFilters()
+                                                }
+                                            }
+                                            ForEach(Array(searchViewModel.selectedTags), id: \.self) { tag in
+                                                SearchChipView(title: tag.capitalized, isSelected: true) {
+                                                    searchViewModel.toggleTag(tag)
+                                                    searchViewModel.applyFilters()
+                                                }
+                                            }
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.bottom, 8)
+                                    }
+                                }
+                            } else if !categories.isEmpty {
+                                // MARK: — Browse Categories (no search yet)
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 8) {
-                                        CategoryChip(title: "All", isSelected: selectedCategory == nil) {
-                                            withAnimation(.spring(response: 0.3)) { selectedCategory = nil }
+                                        CategoryChip(title: "All", isSelected: searchViewModel.selectedCategory == nil) {
+                                            withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = nil }
                                         }
                                         ForEach(categories, id: \.self) { category in
-                                            CategoryChip(title: category, isSelected: selectedCategory == category) {
-                                                withAnimation(.spring(response: 0.3)) { selectedCategory = category }
+                                            CategoryChip(title: category, isSelected: searchViewModel.selectedCategory == category) {
+                                                withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = category }
                                             }
                                         }
                                     }
@@ -99,50 +199,31 @@ struct ProductListView: View {
                             }
                             
                             // MARK: — AI Recommendation Carousel
-                            if searchText.isEmpty && selectedCategory == nil && !recommendedProducts.isEmpty {
+                            if !searchViewModel.hasSearched && searchViewModel.selectedCategory == nil && !recommendedProducts.isEmpty {
                                 RecommendationCarouselView(recommendedProducts: recommendedProducts)
-                            }
-                            
-                            // MARK: — Search Results Header
-                            if !searchText.isEmpty && !recoEngine.searchResults.isEmpty {
-                                HStack {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text("\(recoEngine.searchResults.count) results for \"\(searchText)\"")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 8)
                             }
                             
                             // MARK: — Product Grid
                             LazyVGrid(columns: columns, spacing: 16) {
-                                ForEach(filteredProducts) { product in
+                                ForEach(displayedProducts) { product in
                                     NavigationLink(destination: ProductDetailView(product: product)) {
                                         ProductCardView(product: product)
+                                            .onAppear {
+                                                if product.id == displayedProducts.last?.id {
+                                                    searchViewModel.loadMore()
+                                                }
+                                            }
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                 }
                             }
                             .padding(.horizontal, 12)
                             .padding(.bottom, 16)
-                        }
-                    }
-                    .searchable(text: $searchText, prompt: "Search products, styles, or moods…")
-                    .onSubmit(of: .search) {
-                        if !searchText.isEmpty {
-                            isSearching = true
-                            recoEngine.searchProducts(query: searchText)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                isSearching = false
+                            
+                            if searchViewModel.hasMoreResults && searchViewModel.hasSearched {
+                                ProgressView()
+                                    .padding(.vertical, 20)
                             }
-                        }
-                    }
-                    .onChange(of: searchText) {
-                        if searchText.isEmpty {
-                            recoEngine.searchResults = []
                         }
                     }
                     .refreshable {
@@ -150,29 +231,9 @@ struct ProductListView: View {
                         await recoEngine.fetchRecommendations()
                     }
                     .transition(.opacity.animation(.easeIn(duration: 0.3)))
-                    
-                    // Search loading overlay
-                    if isSearching {
-                        VStack {
-                            Spacer()
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Searching with AI…")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(.regularMaterial)
-                            .clipShape(Capsule())
-                            .shadow(color: .black.opacity(0.1), radius: 10)
-                            .padding(.bottom, 24)
-                        }
-                    }
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading || searchViewModel.isSearching)
             .navigationTitle("Williams Sonoma")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -190,6 +251,31 @@ struct ProductListView: View {
                         NotificationCenter.default.post(name: .userDidLogout, object: nil)
                     })
                 }
+            }
+            .sheet(isPresented: $showFilters) {
+                SearchFilterSheet(viewModel: searchViewModel)
+            }
+            .confirmationDialog("Visual Search", isPresented: $visualVM.showSourceDialog, titleVisibility: .visible) {
+                Button("Camera") { visualVM.showCamera = true }
+                Button("Photo Library") { visualVM.showPhotoLibrary = true }
+                Button("Cancel", role: .cancel) {}
+            }
+            .sheet(isPresented: $visualVM.showCamera) {
+                CameraPickerRepresentable(selectedImage: $visualVM.capturedImage) {
+                    if let img = visualVM.capturedImage {
+                        visualVM.handleImageSelected(img)
+                    }
+                }
+            }
+            .sheet(isPresented: $visualVM.showPhotoLibrary) {
+                PhotoLibraryPickerRepresentable(selectedImage: $visualVM.capturedImage) {
+                    if let img = visualVM.capturedImage {
+                        visualVM.handleImageSelected(img)
+                    }
+                }
+            }
+            .sheet(isPresented: $visualVM.showResults) {
+                VisualSearchResultsView(vm: visualVM)
             }
             .task {
                 if viewModel.products.isEmpty {
