@@ -4,8 +4,11 @@ struct Config {
     // Paste your Razorpay Test Key here
     static let razorpayKey = "rzp_test_Sl0hrrQoUTyluF"
     
-    // Change this to your Mac's IP (e.g. 192.168.1.11) if testing on a real device
+    #if DEBUG
+    // Simulator: 127.0.0.1 works.
+    // Real device: change this to your Mac's LAN IP (e.g. http://192.168.1.11:3000).
+    static let apiBaseURL = "http://127.0.0.1:3000"
+    #else
     static let apiBaseURL = "https://ecommerce-ios.onrender.com"
-    // static let apiBaseURL = "http://localhost:3000"
-    // static let apiBaseURL = "http://127.0.0.1:3000"
+    #endif
 }
