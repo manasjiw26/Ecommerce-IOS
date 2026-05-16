@@ -131,8 +131,8 @@ class RecommendationService {
                 imageUrl: raw.imageUrl,
                 category: raw.category,
                 stock: raw.stock,
-                aiReasoning: raw.aiReasoning,
-                tags: raw.tags
+                tags: raw.tags,
+                aiReasoning: raw.aiReasoning
             )
             return PairItWithProduct(product: product, aiReasoning: raw.aiReasoning)
         }
