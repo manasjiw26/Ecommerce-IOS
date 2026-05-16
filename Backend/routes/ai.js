@@ -4,7 +4,8 @@ const { supabase } = require('../supabaseClient');
 const { GoogleGenAI } = require('@google/genai');
 
 const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY
+    apiKey: process.env.GEMINI_API_KEY,
+    apiVersion: 'v1'
 });
 
 // Load transformers locally
@@ -98,7 +99,7 @@ router.post('/recommend', async (req, res) => {
 
             try {
                 const response = await ai.models.generateContent({
-                    model: "gemini-1.5-flash",
+                    model: "gemini-1.5-flash-8b",
                     contents: [{ role: 'user', parts: [{ text: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.` }] }]
                 });
                 const searchIntent = response.text().trim();
@@ -126,7 +127,7 @@ router.post('/recommend', async (req, res) => {
         try {
             const finalPrompt = `You are an expert e-commerce assistant. Here are the Top 5 absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
             const response = await ai.models.generateContent({
-                model: "gemini-1.5-flash",
+                model: "gemini-1.5-flash-8b",
                 contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
                 generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
             });
