@@ -13,6 +13,7 @@ struct ProductListView: View {
     @State private var showProfile = false
     @State private var isSearching = false
     @ObservedObject private var recoEngine = RecommendationEngine.shared
+    @StateObject private var visualVM = VisualSearchViewModel()
     
     var categories: [String] {
         let allCategories = viewModel.products.compactMap { $0.category }
@@ -79,7 +80,60 @@ struct ProductListView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            
+
+                            // MARK: — Custom Search Bar
+                            HStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                    .font(.system(size: 15))
+
+                                TextField("Search products, styles, or moods…", text: $searchText)
+                                    .font(.system(size: 15))
+                                    .submitLabel(.search)
+                                    .onSubmit {
+                                        if !searchText.isEmpty {
+                                            isSearching = true
+                                            recoEngine.searchProducts(query: searchText)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                                isSearching = false
+                                            }
+                                        }
+                                    }
+                                    .onChange(of: searchText) { newValue in
+                                        if newValue.isEmpty { recoEngine.searchResults = [] }
+                                    }
+
+                                // Camera button
+                                Button {
+                                    visualVM.showSourceDialog = true
+                                } label: {
+                                    Image(systemName: "camera.viewfinder")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(.primary)
+                                }
+                                .buttonStyle(ScaleButtonStyle())
+
+                                // Clear button
+                                if !searchText.isEmpty {
+                                    Button {
+                                        searchText = ""
+                                        recoEngine.searchResults = []
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                            .font(.system(size: 15))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color(UIColor.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+
                             // MARK: — Category Chips
                             if !categories.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
@@ -160,21 +214,6 @@ struct ProductListView: View {
                             .padding(.bottom, 16)
                         }
                     }
-                    .searchable(text: $searchText, prompt: "Search products, styles, or moods…")
-                    .onSubmit(of: .search) {
-                        if !searchText.isEmpty {
-                            isSearching = true
-                            recoEngine.searchProducts(query: searchText)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                isSearching = false
-                            }
-                        }
-                    }
-                    .onChange(of: searchText) { newValue in
-                        if newValue.isEmpty {
-                            recoEngine.searchResults = []
-                        }
-                    }
                     .refreshable {
                         await viewModel.fetchProducts()
                         await recoEngine.fetchRecommendations()
@@ -220,6 +259,45 @@ struct ProductListView: View {
                         NotificationCenter.default.post(name: .userDidLogout, object: nil)
                     })
                 }
+            }
+            // Visual search results sheet
+            .sheet(isPresented: $visualVM.showResults) {
+                VisualSearchResultsView(vm: visualVM)
+            }
+            // Camera picker sheet
+            .sheet(isPresented: $visualVM.showCamera) {
+                CameraPickerRepresentable(selectedImage: $visualVM.capturedImage) {
+                    if let img = visualVM.capturedImage {
+                        visualVM.handleImageSelected(img)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+            // Photo library picker sheet
+            .sheet(isPresented: $visualVM.showPhotoLibrary) {
+                PhotoLibraryPickerRepresentable(selectedImage: $visualVM.capturedImage) {
+                    if let img = visualVM.capturedImage {
+                        visualVM.handleImageSelected(img)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+            // Source selection dialog
+            .confirmationDialog("Search by Image", isPresented: $visualVM.showSourceDialog, titleVisibility: .visible) {
+                Button("Take Photo") { visualVM.showCamera = true }
+                Button("Choose from Library") { visualVM.showPhotoLibrary = true }
+                Button("Cancel", role: .cancel) {}
+            }
+            // Permission denied alert
+            .alert("Permission Required", isPresented: $visualVM.showPermissionAlert) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(visualVM.permissionMessage)
             }
             .task {
                 if viewModel.products.isEmpty {
