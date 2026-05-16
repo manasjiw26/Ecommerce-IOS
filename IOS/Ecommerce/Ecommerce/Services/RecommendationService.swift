@@ -49,14 +49,14 @@ class RecommendationService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        // Build cart_items payload with id, name, category, item_tag
+        // Build cart_items payload with id, name, category, tags
         let cartPayload: [[String: Any]] = cartItems.map { item in
             var dict: [String: Any] = [
                 "id": item.product.id,
                 "name": item.product.name
             ]
             if let category = item.product.category { dict["category"] = category }
-            if let tag = item.product.itemTag       { dict["item_tag"] = tag }
+            if let tags = item.product.tags         { dict["tags"] = tags }
             return dict
         }
 
@@ -132,7 +132,7 @@ class RecommendationService {
                 category: raw.category,
                 stock: raw.stock,
                 aiReasoning: raw.aiReasoning,
-                itemTag: raw.itemTag
+                tags: raw.tags
             )
             return PairItWithProduct(product: product, aiReasoning: raw.aiReasoning)
         }
@@ -161,13 +161,12 @@ private struct AIRecommendedProduct: Decodable {
     let category: String?
     let stock: Int?
     let aiReasoning: String?
-    let itemTag: String?
+    let tags: [String]?
     let imageUrl: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, price, description, category, stock
+        case id, name, price, description, category, stock, tags
         case aiReasoning = "ai_reasoning"
-        case itemTag     = "item_tag"
         case imageUrl    = "image_url"
     }
 }

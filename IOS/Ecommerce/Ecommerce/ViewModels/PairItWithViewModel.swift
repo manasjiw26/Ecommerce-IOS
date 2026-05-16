@@ -113,15 +113,17 @@ class PairItWithViewModel: ObservableObject {
 
     private func singleItemSubheading(cartItems: [CartItem]) -> String {
         let category = cartItems.first?.product.category?.lowercased() ?? ""
-        let tag = cartItems.first?.product.itemTag?.lowercased() ?? ""
+        // Check tags array instead of itemTag
+        let hasCulinary = cartItems.first?.product.tags?.contains { $0.lowercased().contains("cook") || $0.lowercased().contains("culinary") } ?? false
+        let hasCoffee = cartItems.first?.product.tags?.contains { $0.lowercased().contains("coffee") } ?? false
 
-        if category.contains("cook") || tag.contains("culinary") {
+        if category.contains("cook") || hasCulinary {
             return "Popular pairings for your cookware"
-        } else if category.contains("coffee") || tag.contains("coffee") {
+        } else if category.contains("coffee") || hasCoffee {
             return "Essential additions for your coffee setup"
-        } else if category.contains("bake") || tag.contains("bake") {
+        } else if category.contains("bake") {
             return "Perfect pairings for your baking essentials"
-        } else if category.contains("outdoor") || tag.contains("hosting") {
+        } else if category.contains("outdoor") {
             return "Complement your outdoor selection"
         }
         return "Popular pairings for your selection"

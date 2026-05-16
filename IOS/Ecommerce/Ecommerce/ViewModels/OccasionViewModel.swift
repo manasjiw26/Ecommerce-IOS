@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreML
 
 @MainActor
 class OccasionViewModel: ObservableObject {
@@ -13,64 +14,134 @@ class OccasionViewModel: ObservableObject {
             return
         }
         
-        // Count tags
+        // 1. Prepare Features for Core ML
+        let calendar = Calendar.current
+        let month = Double(calendar.component(.month, from: Date()))
+        
+        // Aggregate tags and find top category
         var tagCounts: [String: Int] = [:]
+        var categoryCounts: [String: Int] = [:]
+        var totalPrice: Double = 0
+        var allTags: Set<String> = []
         for item in items {
-            if let tag = item.product.itemTag {
-                tagCounts[tag, default: 0] += item.quantity
+            totalPrice += item.product.price * Double(item.quantity)
+            let category = item.product.category ?? "general"
+            categoryCounts[category, default: 0] += item.quantity
+            
+            // Collect raw tags exactly as they are in your database
+            if let tags = item.product.tags {
+                for rawTag in tags {
+                    let tag = rawTag.lowercased().trimmingCharacters(in: .whitespaces)
+                    allTags.insert(tag)
+                }
             }
         }
         
-        // Rough calculation: Trigger occasion if 2+ items match or if it's the majority
-        if let (topTag, count) = tagCounts.max(by: { $0.value < $1.value }), count >= 1 {
-            switch topTag {
-            case "hosting":
-                currentOccasion = Occasion(
-                    title: "SMART OCCASION",
-                    subtitle: "Hosting Night",
-                    description: "Perfect evening essentials.",
-                    tag: "hosting",
-                    backgroundImageUrl: "hosting_night_bg",
-                    isLocalAsset: true
-                )
-            case "home_sanctuary":
-                currentOccasion = Occasion(
-                    title: "SMART OCCASION",
-                    subtitle: "Home Sanctuary",
-                    description: "Your cozy corner.",
-                    tag: "home_sanctuary",
-                    backgroundImageUrl: "home_sanctuary_bg",
-                    isLocalAsset: true
-                )
-            case "culinary":
-                currentOccasion = Occasion(
-                    title: "SMART OCCASION",
-                    subtitle: "Culinary Masterclass",
-                    description: "Professional home tools.",
-                    tag: "culinary",
-                    backgroundImageUrl: "culinary_bg",
-                    isLocalAsset: true
-                )
-            default:
-                currentOccasion = nil
+        // Create the blob: 6 tags max, space-separated, natural order
+        let tagsBlob = allTags.prefix(6).joined(separator: " ")
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+        let itemCount = Int64(items.count)
+        
+        let avgPrice = totalPrice / Double(items.count)
+        let priceTier: String
+        if avgPrice < 30 { priceTier = "budget" }
+        else if avgPrice < 100 { priceTier = "mid-range" }
+        else { priceTier = "luxury" }
+        
+        // 2. Run Prediction using Core ML
+        do {
+            let config = MLModelConfiguration()
+            let model = try updatedModel(configuration: config)
+            
+            // Ensure we never send an empty string to the model
+            let safeTags = tagsBlob.isEmpty ? "none" : tagsBlob
+            
+            print("--- Occasion Prediction (New Model) ---")
+            print("Month: \(Int64(month))")
+            print("Tags Blob: [\(safeTags)]")
+            print("Price Tier: [\(priceTier)]")
+            print("Item Count: \(itemCount)")
+            
+            let input = updatedModelInput(
+                month: Int64(month),
+                item_tags_blob: safeTags,
+                price_tier: priceTier,
+                item_count: itemCount
+            )
+            
+            let prediction = try model.prediction(input: input)
+            let predictedOccasion = prediction.occasion_label
+            
+            // --- ADVANCED DEBUG: PROBABILITIES ---
+            print("📊 AI Confidence Scores:")
+            for (label, prob) in prediction.occasion_labelProbability {
+                let percentage = String(format: "%.1f%%", prob * 100)
+                print("   [\(label)]: \(percentage)")
             }
-        } else {
-            // Fallback/Bug condition: hide card if no strong occasion detected
-            currentOccasion = nil
+            // -------------------------------------
+            
+            print("✅ Final Prediction: \(predictedOccasion)")
+            print("---------------------------------")
+            
+            // 3. Update UI State and Trigger Recommendations
+            updateOccasionState(for: predictedOccasion)
+            
+        } catch {
+            print("❌ Core ML Prediction Error: \(error.localizedDescription)")
+            print("🔄 Triggering FALLBACK Logic...")
+            // Fallback to simple tag-based logic if model fails
+            fallbackDetection(tagCounts: tagCounts)
         }
     }
     
-    // Placeholder for future Gemini API integration
-    func fetchOccasionFromGemini() async {
-        let apiKey = Config.geminiAPIKey
-        guard apiKey != "YOUR_GEMINI_API_KEY_HERE" else { 
-            print("Gemini API Key missing")
-            return 
+    private func updateOccasionState(for label: String) {
+        // Map the predicted label to our UI model
+        let lowercaseLabel = label.lowercased()
+        
+        if lowercaseLabel.contains("hosting") {
+            currentOccasion = Occasion(
+                title: "SMART OCCASION",
+                subtitle: "Hosting Night",
+                description: "Perfect evening essentials.",
+                tag: "hosting",
+                backgroundImageUrl: "hosting_night_bg",
+                isLocalAsset: true
+            )
+        } else if lowercaseLabel.contains("sanctuary") {
+            currentOccasion = Occasion(
+                title: "SMART OCCASION",
+                subtitle: "Home Sanctuary",
+                description: "Your cozy corner.",
+                tag: "home_sanctuary",
+                backgroundImageUrl: "home_sanctuary_bg",
+                isLocalAsset: true
+            )
+        } else if lowercaseLabel.contains("culinary") {
+            currentOccasion = Occasion(
+                title: "SMART OCCASION",
+                subtitle: "Culinary Masterclass",
+                description: "Professional home tools.",
+                tag: "culinary",
+                backgroundImageUrl: "culinary_bg",
+                isLocalAsset: true
+            )
+        } else {
+            currentOccasion = nil
         }
         
-        // Future implementation for actual model integration
-        // 1. Prepare cart context (item names, categories)
-        // 2. Call Gemini API
-        // 3. Update currentOccasion based on AI response
+        // If an occasion was detected, trigger the Recommendation Engine
+        if let occasion = currentOccasion {
+            RecommendationEngine.shared.searchProducts(query: occasion.tag)
+        }
+    }
+    
+    private func fallbackDetection(tagCounts: [String: Int]) {
+        if let (topTag, _) = tagCounts.max(by: { $0.value < $1.value }) {
+            updateOccasionState(for: topTag)
+        } else {
+            currentOccasion = nil
+        }
     }
 }

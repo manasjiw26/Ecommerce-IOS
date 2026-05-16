@@ -62,13 +62,7 @@ class CartManager: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: saveKey),
            let decoded = try? JSONDecoder().decode([CartItem].self, from: data) {
             
-            // Re-inject mock tags to support legacy carts saved before itemTag was added
-            let products = decoded.map { $0.product }
-            let taggedProducts = MockDataService.shared.injectMockTags(to: products)
-            
-            items = zip(decoded, taggedProducts).map { item, taggedProduct in
-                CartItem(id: item.id, product: taggedProduct, quantity: item.quantity)
-            }
+            items = decoded
         }
     }
 }

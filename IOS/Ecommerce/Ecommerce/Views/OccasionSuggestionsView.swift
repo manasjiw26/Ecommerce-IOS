@@ -4,14 +4,21 @@ struct OccasionSuggestionsView: View {
     let occasion: Occasion
     @EnvironmentObject var productViewModel: ProductViewModel
     @EnvironmentObject var cartManager: CartManager
+    @StateObject var recommendationEngine = RecommendationEngine.shared
     
     let columns = [
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
     
-    var filteredProducts: [Product] {
-        productViewModel.products.filter { $0.itemTag == occasion.tag }
+    // Instead of local filtering, we now use the AI-driven search results from our backend
+    var displayProducts: [Product] {
+        if recommendationEngine.searchResults.isEmpty {
+            // Fallback to local filtering if backend is slow or offline
+            return productViewModel.products.filter { $0.tags?.contains(occasion.tag) ?? false }
+        } else {
+            return recommendationEngine.searchResults
+        }
     }
     
     var body: some View {
@@ -59,16 +66,15 @@ struct OccasionSuggestionsView: View {
                         .padding(20)
                     }
                     .frame(height: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 0)) // Match edge-to-edge style if needed or keep it clean
                     
-                    Text("Recommended For You")
+                    Text("AI-Recommended for you")
                         .font(.headline)
                         .fontWeight(.bold)
                         .padding(.horizontal, 16)
                         .padding(.top, 24)
                         .padding(.bottom, 16)
                     
-                    if filteredProducts.isEmpty {
+                    if displayProducts.isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 40))
@@ -79,7 +85,7 @@ struct OccasionSuggestionsView: View {
                         .frame(maxWidth: .infinity, minHeight: 300)
                     } else {
                         LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(filteredProducts) { product in
+                            ForEach(displayProducts) { product in
                                 NavigationLink(destination: ProductDetailView(product: product)) {
                                     ProductCardView(product: product)
                                 }
@@ -94,5 +100,11 @@ struct OccasionSuggestionsView: View {
         }
         .navigationTitle(occasion.subtitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            // Ensure search results are triggered if they haven't been already
+            if recommendationEngine.searchResults.isEmpty {
+                recommendationEngine.searchProducts(query: occasion.tag)
+            }
+        }
     }
 }

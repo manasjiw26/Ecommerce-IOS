@@ -30,9 +30,9 @@ struct OccasionCardView: View {
                 }
             }
             
-            // Dark Gradient Overlay
+            // Dark Gradient Overlay - More intense to ensure text visibility
             LinearGradient(
-                gradient: Gradient(colors: [.clear, .black.opacity(0.7)]),
+                gradient: Gradient(colors: [.clear, .black.opacity(0.4), .black.opacity(0.85)]),
                 startPoint: .top,
                 endPoint: .bottom
             )
