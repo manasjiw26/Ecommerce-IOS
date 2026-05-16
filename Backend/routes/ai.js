@@ -150,4 +150,294 @@ router.post('/recommend', async (req, res) => {
     }
 });
 
+// ─────────────────────────────────────────────
+// VISUAL SEARCH ROUTES
+// ─────────────────────────────────────────────
+
+const STORAGE_BASE = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
+
+function fixImageUrl(product) {
+    if (product.image_url && !product.image_url.startsWith('http')) {
+        product.image_url = `${STORAGE_BASE}/${encodeURIComponent(product.image_url)}`;
+    }
+    return product;
+}
+
+// POST /ai/visual-search
+// Body: { device_id, vision_labels: [{label, confidence}], top_label, base64_image? }
+router.post('/visual-search', async (req, res) => {
+    const { device_id, vision_labels, top_label, base64_image } = req.body;
+    if (!device_id || !Array.isArray(vision_labels) || vision_labels.length === 0) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    try {
+        const labelStrings = vision_labels.map(v => (v.label || v).toLowerCase()).filter(Boolean);
+        const top5 = labelStrings.slice(0, 5);
+
+        // ── Step 1: Build text query string from Vision labels ────────────────
+        const queryString = vision_labels
+            .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+            .slice(0, 10)
+            .map(v => (v.label || v).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').trim())
+            .filter(Boolean)
+            .join(' ');
+
+        // ── Step 2: Run all queries in parallel ───────────────────────────────
+        const [imageSearchResult, textSearchResult, tagMatchResult, ...ilikeResults] =
+            await Promise.allSettled([
+
+            // A) CLIP image similarity search (best — true visual match)
+            (async () => {
+                if (!base64_image) throw new Error('No image provided');
+                const { RawImage, pipeline: p } = await import('@xenova/transformers');
+                const extractor = await p('image-feature-extraction', 'Xenova/clip-vit-base-patch32');
+                const imageBuffer = Buffer.from(base64_image, 'base64');
+                const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
+                const image = await RawImage.fromBlob(blob);
+                const output = await extractor(image, { pooling: 'mean', normalize: true });
+                const embedding = Array.from(output.data);
+                const { data, error } = await supabase.rpc('image_similarity_search', {
+                    query_embedding: embedding,
+                    match_count: 20
+                });
+                if (error) throw error;
+                return { results: data || [], type: 'image' };
+            })(),
+
+            // B) Text hybrid search (fallback when no image)
+            (async () => {
+                const embedding = await getLocalEmbedding(queryString);
+                const { data, error } = await supabase.rpc('hybrid_search', {
+                    query_text: queryString,
+                    query_embedding: embedding,
+                    match_count: 20
+                });
+                if (error) throw error;
+                return { results: data || [], type: 'text' };
+            })(),
+
+            // C) Tag overlap
+            supabase
+                .from('products')
+                .select('id, name, price, image_url, category, tags, description, stock')
+                .overlaps('tags', labelStrings)
+                .gt('stock', 0),
+
+            // D) ILIKE text search for top 5 labels
+            ...top5.map(label =>
+                supabase
+                    .from('products')
+                    .select('id, name, price, image_url, category, tags, description, stock')
+                    .or(`name.ilike.%${label}%,category.ilike.%${label}%,description.ilike.%${label}%`)
+                    .gt('stock', 0)
+            )
+        ]);
+
+        // ── Step 3: Merge & deduplicate ───────────────────────────────────────
+        const seen = new Set();
+        const merged = [];
+        const hasImageSearch = imageSearchResult.status === 'fulfilled';
+
+        // PRIMARY: CLIP image similarity (when base64_image was provided)
+        // Position score: rank 1 = 1.0, rank 20 = ~0.05
+        if (hasImageSearch) {
+            const list = imageSearchResult.value.results;
+            const total = list.length || 1;
+            list.forEach((p, i) => {
+                if (!seen.has(p.id)) {
+                    seen.add(p.id);
+                    merged.push({ ...p, _image_score: 1 - (i / total), _hybrid_score: 0 });
+                }
+            });
+        }
+
+        // SECONDARY: text hybrid search (used when no image, or to fill gaps)
+        if (textSearchResult.status === 'fulfilled') {
+            const list = textSearchResult.value.results.filter(p => (p.stock ?? 1) > 0);
+            const total = list.length || 1;
+            list.forEach((p, i) => {
+                if (!seen.has(p.id)) {
+                    seen.add(p.id);
+                    merged.push({ ...p, _image_score: 0, _hybrid_score: 1 - (i / total) });
+                } else {
+                    // Already in from image search — add hybrid score too
+                    const existing = merged.find(m => m.id === p.id);
+                    if (existing) existing._hybrid_score = 1 - (i / total);
+                }
+            });
+        }
+
+        // Tag overlap — flag for bonus
+        const tagMatchIds = new Set();
+        if (tagMatchResult.status === 'fulfilled') {
+            for (const p of (tagMatchResult.value.data || [])) {
+                tagMatchIds.add(p.id);
+                if (!seen.has(p.id)) {
+                    seen.add(p.id);
+                    merged.push({ ...p, _image_score: 0, _hybrid_score: 0 });
+                }
+            }
+        }
+
+        // ILIKE results
+        for (const r of ilikeResults) {
+            if (r.status === 'fulfilled') {
+                for (const p of (r.value.data || [])) {
+                    if (!seen.has(p.id)) {
+                        seen.add(p.id);
+                        merged.push({ ...p, _image_score: 0, _hybrid_score: 0 });
+                    }
+                }
+            }
+        }
+
+
+        // ── Step 4: Score ─────────────────────────────────────────────────────
+        // Top 3 Vision labels (highest confidence) — these define what the image IS
+        const topVisionLabels = [...vision_labels]
+            .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+            .slice(0, 3)
+            .map(vl => (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim())
+            .filter(Boolean);
+
+        const scored = merged.map(product => {
+            const name        = (product.name || '').toLowerCase();
+            const category    = (product.category || '').toLowerCase();
+            const tags        = (product.tags || []).map(t => t.toLowerCase());
+            const description = (product.description || '').toLowerCase();
+            const haystack    = [name, category, tags.join(' '), description].join(' ');
+
+            // ① PRIMARY MATCH — does product contain any top Vision label?
+            //   Tag match > name/category match > description match
+            //   Top label (rank 1) weighs more than rank 2, rank 3
+            let primaryScore = 0;
+            topVisionLabels.forEach((lbl, i) => {
+                const weight = 1 - (i * 0.2); // rank1=1.0, rank2=0.8, rank3=0.6
+                if (tags.some(t => t.includes(lbl) || lbl.includes(t))) {
+                    primaryScore = Math.max(primaryScore, weight);           // strongest
+                } else if (name.includes(lbl) || category.includes(lbl)) {
+                    primaryScore = Math.max(primaryScore, weight * 0.85);    // strong
+                } else if (description.includes(lbl)) {
+                    primaryScore = Math.max(primaryScore, weight * 0.5);     // weak
+                }
+            });
+
+            // ② FULL LABEL COVERAGE — how many total Vision labels match?
+            let labelScore = 0;
+            for (const vl of vision_labels) {
+                const lbl  = (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim();
+                const conf = typeof vl.confidence === 'number' ? vl.confidence : 0.5;
+                if (lbl && haystack.includes(lbl)) labelScore += conf;
+            }
+            const normLabel = Math.min(labelScore / 3, 1);
+
+            // ③ TAG OVERLAP BONUS
+            const tagBonus = tagMatchIds.has(product.id) ? 0.2 : 0;
+
+            let combined;
+            if (hasImageSearch) {
+                // CLIP image search ran → image similarity is king
+                // 65% image similarity | 15% label match | 10% tag bonus | 10% text hybrid
+                combined = (product._image_score  * 0.65)
+                         + (normLabel             * 0.15)
+                         + (tagBonus              * 0.10)
+                         + (product._hybrid_score * 0.10);
+            } else {
+                // No image sent → fall back to label-first text ranking
+                // 55% primary label | 20% label coverage | 15% text hybrid | 10% tag bonus
+                combined = (primaryScore           * 0.55)
+                         + (normLabel              * 0.20)
+                         + (product._hybrid_score  * 0.15)
+                         + (tagBonus               * 0.10);
+            }
+
+            return { ...product, _score: combined };
+        });
+
+        // Sort descending; tiebreak by tag match
+        scored.sort((a, b) => {
+            if (Math.abs(b._score - a._score) > 0.02) return b._score - a._score;
+            return (tagMatchIds.has(b.id) ? 1 : 0) - (tagMatchIds.has(a.id) ? 1 : 0);
+        });
+        let final = scored.slice(0, 8);
+
+
+        // ── Step 5: Fallback — always return 8 products ───────────────────────
+        if (final.length < 8) {
+            const existingIds = new Set(final.map(p => p.id));
+            const { data: recent } = await supabase
+                .from('products')
+                .select('id, name, price, image_url, category, tags, description, stock')
+                .gt('stock', 0)
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+            for (const p of (recent || [])) {
+                if (!existingIds.has(p.id)) {
+                    final.push({ ...p, _score: 0 });
+                    existingIds.add(p.id);
+                    if (final.length >= 8) break;
+                }
+            }
+        }
+
+        final = final.map(fixImageUrl);
+        const resultIds = final.map(p => p.id);
+
+        // ── Step 6: Log ───────────────────────────────────────────────────────
+        const { data: logRow } = await supabase
+            .from('visual_search_logs')
+            .insert([{
+                device_id,
+                vision_labels: vision_labels,
+                matched_product_ids: resultIds,
+                top_label: top_label || labelStrings[0] || ''
+            }])
+            .select('id')
+            .single();
+
+        if (resultIds.length > 0) {
+            await supabase.from('user_events').insert([{
+                device_id,
+                product_id: resultIds[0],
+                event_type: 'visual_search'
+            }]);
+        }
+
+        res.json({
+
+            products: final,
+            search_log_id: logRow?.id || null,
+            labels_used: labelStrings
+        });
+
+    } catch (error) {
+        console.error('Visual search error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST /ai/visual-search/feedback
+// Body: { device_id, search_log_id, product_id, was_relevant }
+router.post('/visual-search/feedback', async (req, res) => {
+    const { device_id, search_log_id, product_id, was_relevant } = req.body;
+    if (!device_id || product_id == null || was_relevant == null) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    try {
+        await supabase.from('visual_search_feedback').insert([{
+            device_id,
+            search_log_id: search_log_id || null,
+            product_id,
+            was_relevant
+        }]);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;
+
