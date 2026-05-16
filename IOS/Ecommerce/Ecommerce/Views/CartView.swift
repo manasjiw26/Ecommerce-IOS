@@ -124,22 +124,19 @@ struct CartView: View {
                 .environmentObject(cartManager)
         }
         .task {
-            // Priority 1: Detect Occasions
+            // Priority 1: Detect Occasions (untouched)
             occasionViewModel.detectOccasion(from: cartManager.items)
-            
-            // Priority 2: Load recommendations
-            pairItWithViewModel.generateRecommendations(from: cartManager.items, allProducts: productViewModel.products)
-            
+
+            // Priority 2: Fetch AI recommendations from backend
+            pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
+
             // Priority 3: Stock check
             await refreshStock()
         }
-        .onChange(of: cartManager.items.count) {
+        .onChange(of: cartManager.items) { _ in
             Task {
                 occasionViewModel.detectOccasion(from: cartManager.items)
-                pairItWithViewModel.generateRecommendations(
-                    from: cartManager.items,
-                    allProducts: productViewModel.products
-                )
+                pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
                 await refreshStock()
             }
         }

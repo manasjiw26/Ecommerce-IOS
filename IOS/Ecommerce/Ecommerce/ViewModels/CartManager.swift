@@ -2,10 +2,14 @@ import Foundation
 import Combine
 import SwiftUI
 
-struct CartItem: Identifiable, Codable {
+struct CartItem: Identifiable, Codable, Equatable {
     var id = UUID()
     let product: Product
     var quantity: Int
+
+    static func == (lhs: CartItem, rhs: CartItem) -> Bool {
+        lhs.product.id == rhs.product.id && lhs.quantity == rhs.quantity
+    }
 }
 
 @MainActor
@@ -27,6 +31,7 @@ class CartManager: ObservableObject {
         } else {
             items.append(CartItem(product: product, quantity: 1))
         }
+        RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_add")
         saveCart()
     }
     
@@ -37,6 +42,7 @@ class CartManager: ObservableObject {
             } else {
                 items.remove(at: index)
             }
+            RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
             saveCart()
         }
     }

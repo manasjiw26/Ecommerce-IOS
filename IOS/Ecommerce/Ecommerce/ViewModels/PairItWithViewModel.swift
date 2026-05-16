@@ -1,109 +1,157 @@
 import Foundation
 import Combine
+import SwiftUI
+
+// MARK: - Intelligence Level
+enum RecommendationLevel {
+    case empty        // 0 items — show popular
+    case single       // 1 item — simple complements
+    case contextual   // 2–3 related items — setup context
+    case intent       // 4+ items — lifestyle/intent
+    case multiContext // mixed unrelated categories
+}
 
 @MainActor
 class PairItWithViewModel: ObservableObject {
     @Published var recommendations: [PairItWithProduct] = []
-    
-    // Pairing rules: Map a tag/category found in cart to a list of categories to recommend
-    private let pairingRules: [String: [String]] = [
-        "culinary": ["utensils", "linens", "serving"],
-        "cookware": ["utensils", "linens", "serving tools"],
-        "coffee": ["accessories", "food", "mugs"],
-        "hosting": ["decor", "serving", "linens"],
-        "home_sanctuary": ["decor", "scents", "pillows"]
-    ]
-    
+    @Published var isLoading: Bool = false
+    @Published var contextSubheading: String = "Handpicked for you"
+    @Published var intelligenceLevel: RecommendationLevel = .empty
+
+    private var fetchTask: Task<Void, Never>?
+    private let service = RecommendationService.shared
+
     init() {}
-    
-    func generateRecommendations(from cartItems: [CartItem], allProducts: [Product]) {
-        guard !allProducts.isEmpty else { return }
-        
-        if cartItems.isEmpty {
-            // Show a curated selection from real products
-            self.recommendations = allProducts
-                .filter { $0.stock ?? 0 > 0 }
-                .prefix(5)
-                .map { PairItWithProduct(product: $0, recommendationLabel: "Top Pick") }
-            return
+
+    // MARK: - Public Trigger
+
+    /// Triggers a debounced backend fetch and immediately updates the
+    /// subheading to reflect the current cart state.
+    func fetchRecommendations(cartItems: [CartItem]) {
+        let cartProductIds = Set(cartItems.map { $0.product.id })
+
+        // Optimistically remove items that are now in the cart so it feels instant
+        withAnimation(.easeInOut(duration: 0.35)) {
+            self.recommendations.removeAll { cartProductIds.contains($0.product.id) }
+            updateLevel(cartItems: cartItems)
         }
-        
-        // 1. Identify what's in the cart
-        var cartProductIds: Set<Int> = []
-        var detectedTags: Set<String> = []
-        var detectedCategories: Set<String> = []
-        
-        for item in cartItems {
-            cartProductIds.insert(item.product.id)
-            if let tag = item.product.itemTag {
-                detectedTags.insert(tag)
+
+        fetchTask?.cancel()
+        fetchTask = Task {
+            // 800ms debounce — absorbs rapid add/remove/quantity taps
+            do {
+                try await Task.sleep(nanoseconds: 800_000_000)
+            } catch {
+                return
             }
-            if let category = item.product.category {
-                detectedCategories.insert(category)
-            }
-        }
-        
-        // 2. Determine target categories based on pairing rules
-        var targetCategories: Set<String> = []
-        for tag in detectedTags {
-            if let targets = pairingRules[tag] {
-                targetCategories.formUnion(targets)
-            }
-        }
-        for category in detectedCategories {
-            if let targets = pairingRules[category.lowercased()] {
-                targetCategories.formUnion(targets)
-            }
-        }
-        
-        // 3. Score real products from the catalog
-        var scoredProducts: [(product: Product, score: Int, label: String)] = []
-        
-        for product in allProducts {
-            // Exclude items already in cart
-            guard !cartProductIds.contains(product.id) else { continue }
-            
-            var score = 0
-            var label = "Recommended"
-            
-            // Check if product belongs to a target category
-            if let category = product.category?.lowercased(), targetCategories.contains(category) {
-                score += 10
-            }
-            
-            // Check for tag overlap
-            if let tag = product.itemTag, detectedTags.contains(tag) {
-                score += 5
-                if label == "Recommended" {
-                    label = "Similar Style"
+            guard !Task.isCancelled else { return }
+
+            // Show shimmer to indicate refresh
+            isLoading = true
+
+            // Send cart items to backend — cart is now the PRIMARY signal
+            let (aiContext, results) = await service.fetchRecommendations(cartItems: cartItems)
+
+            guard !Task.isCancelled else { return }
+
+            // Filter out items that are already in the cart (defense in depth)
+            let filteredResults = results.filter { !cartProductIds.contains($0.product.id) }
+
+            withAnimation(.easeInOut(duration: 0.4)) {
+                self.recommendations = filteredResults
+
+                // Use backend-generated ai_context as the subheading if available.
+                // Falls back to local heuristics only when backend doesn't provide one.
+                if !aiContext.isEmpty {
+                    self.contextSubheading = aiContext
+                } else {
+                    updateLevel(cartItems: cartItems)
                 }
             }
-            
-            if score > 0 {
-                scoredProducts.append((product, score, label))
-            }
+            isLoading = false
         }
-        
-        // 4. Sort and limit
-        let topResults = scoredProducts
-            .sorted { $0.score > $1.score }
-            .prefix(6)
-            .map { PairItWithProduct(product: $0.product, recommendationLabel: $0.label) }
-        
-        // 5. Fallback if not enough matches
-        if topResults.count < 3 {
-            var combined = Array(topResults)
-            let existingIds = Set(combined.map { $0.product.id })
-            
-            let fillers = allProducts
-                .filter { !cartProductIds.contains($0.id) && !existingIds.contains($0.id) }
-                .prefix(3 - topResults.count)
-                .map { PairItWithProduct(product: $0, recommendationLabel: "You Might Like") }
-            
-            combined.append(contentsOf: fillers)
-            self.recommendations = combined
-        } else {
-            self.recommendations = Array(topResults)
+    }
+
+    // MARK: - Fallback Level & Subheading Logic
+    // Used only when backend doesn't provide ai_context (network error, etc.)
+
+    private func updateLevel(cartItems: [CartItem]) {
+        let count = cartItems.count
+
+        if count == 0 {
+            intelligenceLevel = .empty
+            contextSubheading = "Handpicked for you"
+            return
         }
+
+        // Detect unique categories in the cart
+        let cartCategories = Set(cartItems.compactMap { $0.product.category?.lowercased() })
+
+        // Multi-context: 3+ distinct categories = mixed intent
+        if cartCategories.count >= 3 && count >= 3 {
+            intelligenceLevel = .multiContext
+            contextSubheading = "Suggestions across your shopping interests"
+            return
+        }
+
+        switch count {
+        case 1:
+            intelligenceLevel = .single
+            contextSubheading = singleItemSubheading(cartItems: cartItems)
+
+        case 2...3:
+            intelligenceLevel = .contextual
+            contextSubheading = contextualSubheading(cartCategories: cartCategories)
+
+        default: // 4+
+            intelligenceLevel = .intent
+            contextSubheading = intentSubheading(cartCategories: cartCategories)
+        }
+    }
+
+    // MARK: Fallback Subheading Generators
+
+    private func singleItemSubheading(cartItems: [CartItem]) -> String {
+        let category = cartItems.first?.product.category?.lowercased() ?? ""
+        let tag = cartItems.first?.product.itemTag?.lowercased() ?? ""
+
+        if category.contains("cook") || tag.contains("culinary") {
+            return "Popular pairings for your cookware"
+        } else if category.contains("coffee") || tag.contains("coffee") {
+            return "Essential additions for your coffee setup"
+        } else if category.contains("bake") || tag.contains("bake") {
+            return "Perfect pairings for your baking essentials"
+        } else if category.contains("outdoor") || tag.contains("hosting") {
+            return "Complement your outdoor selection"
+        }
+        return "Popular pairings for your selection"
+    }
+
+    private func contextualSubheading(cartCategories: Set<String>) -> String {
+        if cartCategories.contains(where: { $0.contains("bake") || $0.contains("pastry") }) {
+            return "Looks like you're building a baking setup"
+        } else if cartCategories.contains(where: { $0.contains("coffee") || $0.contains("espresso") }) {
+            return "Perfect additions for your coffee corner"
+        } else if cartCategories.contains(where: { $0.contains("cook") || $0.contains("culinary") }) {
+            return "Complete your kitchen essentials"
+        } else if cartCategories.contains(where: { $0.contains("outdoor") || $0.contains("dining") }) {
+            return "Complete your dining essentials"
+        } else if cartCategories.contains(where: { $0.contains("host") || $0.contains("serving") }) {
+            return "Everything for a perfect hosting setup"
+        }
+        return "Looks like you're building something special"
+    }
+
+    private func intentSubheading(cartCategories: Set<String>) -> String {
+        if cartCategories.contains(where: { $0.contains("host") || $0.contains("dining") || $0.contains("serving") }) {
+            return "Curated for your hosting experience"
+        } else if cartCategories.contains(where: { $0.contains("outdoor") }) {
+            return "Complete your outdoor entertaining setup"
+        } else if cartCategories.contains(where: { $0.contains("cook") || $0.contains("culinary") }) {
+            return "Complete your modern kitchen setup"
+        } else if cartCategories.contains(where: { $0.contains("coffee") }) {
+            return "Curated for your luxury coffee corner"
+        }
+        return "Curated recommendations for your experience"
     }
 }
