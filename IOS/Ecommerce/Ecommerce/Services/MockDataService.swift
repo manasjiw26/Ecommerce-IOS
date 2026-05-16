@@ -27,7 +27,7 @@ class MockDataService {
                 category: product.category,
                 stock: product.stock,
                 aiReasoning: product.aiReasoning,
-                itemTag: tag
+                tags: tag != nil ? [tag!] : []
             )
         }
     }

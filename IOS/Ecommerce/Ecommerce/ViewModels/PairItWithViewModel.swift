@@ -35,8 +35,10 @@ class PairItWithViewModel: ObservableObject {
         
         for item in cartItems {
             cartProductIds.insert(item.product.id)
-            if let tag = item.product.itemTag {
-                detectedTags.insert(tag)
+            if let tags = item.product.tags {
+                for tag in tags {
+                    detectedTags.insert(tag)
+                }
             }
             if let category = item.product.category {
                 detectedCategories.insert(category)
@@ -72,10 +74,15 @@ class PairItWithViewModel: ObservableObject {
             }
             
             // Check for tag overlap
-            if let tag = product.itemTag, detectedTags.contains(tag) {
-                score += 5
-                if label == "Recommended" {
-                    label = "Similar Style"
+            if let tags = product.tags {
+                for tag in tags {
+                    if detectedTags.contains(tag) {
+                        score += 5
+                        if label == "Recommended" {
+                            label = "Similar Style"
+                        }
+                        break
+                    }
                 }
             }
             
