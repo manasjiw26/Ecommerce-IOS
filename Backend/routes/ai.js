@@ -199,11 +199,18 @@ router.post('/search', async (req, res) => {
     } catch (error) {
         console.error('Complex Search Failed. Falling back to Native Postgres ILIKE:', error.message);
         
-        const fallbackQuery = `%${query}%`;
+        // Sanitize query into keywords
+        const stopwords = ['can','you','find','me','some','show','looking','for','i','want','to','buy','do','have','the','a','an','is','are','of','in','on','with'];
+        const keywords = query.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
+        
+        // If no keywords found, fallback to original query
+        const searchTerms = keywords.length > 0 ? keywords : [query];
+        const orConditions = searchTerms.map(kw => `name.ilike.%${kw}%,description.ilike.%${kw}%,category.ilike.%${kw}%`).join(',');
+
         const { data: fallbackData, error: fallbackError } = await supabase
             .from('products')
             .select('*')
-            .or(`name.ilike.${fallbackQuery},description.ilike.${fallbackQuery},category.ilike.${fallbackQuery}`)
+            .or(orConditions)
             .order('stock', { ascending: false })
             .limit(20);
 
@@ -241,8 +248,9 @@ router.post('/recommend', async (req, res) => {
             }).filter(Boolean).join('\n');
 
             try {
+                const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-8b";
                 const response = await ai.models.generateContent({
-                    model: "gemini-1.5-flash-8b",
+                    model: GEMINI_MODEL,
                     contents: [{ role: 'user', parts: [{ text: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.` }] }]
                 });
                 const searchIntent = response.text().trim();
@@ -268,10 +276,11 @@ router.post('/recommend', async (req, res) => {
         let recommendedItems = [];
         try {
             const finalPrompt = `You are an expert e-commerce assistant. Here are the Top 5 absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
+            const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-8b";
             const response = await ai.models.generateContent({
-                model: "gemini-1.5-flash-8b",
+                model: GEMINI_MODEL,
                 contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-                generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+                generationConfig: { temperature: 0.15, responseMimeType: "application/json" }
             });
             recommendedItems = JSON.parse(response.text());
         } catch(e) {
@@ -293,7 +302,6 @@ router.post('/recommend', async (req, res) => {
     }
 });
 
-<<<<<<< HEAD
 // ─────────────────────────────────────────────
 // VISUAL SEARCH ROUTES
 // ─────────────────────────────────────────────
@@ -632,4 +640,3 @@ router.get('/regenerate_embeddings', async (req, res) => {
 });
 
 module.exports = router;
-

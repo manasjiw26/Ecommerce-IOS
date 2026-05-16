@@ -25,6 +25,13 @@ router.post('/signup', async (req, res) => {
 
     // If email confirmation is disabled, session is returned immediately
     if (data.session?.access_token) {
+        // Upsert into public.users
+        await supabase.from('users').upsert({
+            id: data.user.id,
+            email: data.user.email,
+            name: data.user.user_metadata?.full_name
+        });
+        
         return res.json({
             user: {
                 id: data.user?.id,
@@ -39,6 +46,12 @@ router.post('/signup', async (req, res) => {
     const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
 
     if (!loginError && loginData.session) {
+        await supabase.from('users').upsert({
+            id: loginData.user.id,
+            email: loginData.user.email,
+            name: loginData.user.user_metadata?.full_name
+        });
+        
         return res.json({
             user: {
                 id: loginData.user?.id,
@@ -50,6 +63,12 @@ router.post('/signup', async (req, res) => {
     }
 
     // Account created but confirmation needed
+    await supabase.from('users').upsert({
+        id: data.user.id,
+        email: data.user.email,
+        name: data.user.user_metadata?.full_name
+    });
+    
     return res.json({
         user: {
             id: data.user?.id,
@@ -72,6 +91,13 @@ router.post('/login', async (req, res) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) return res.status(401).json({ error: error.message });
+
+    // Upsert into public.users to ensure foreign key constraints (like cart_items) pass
+    await supabase.from('users').upsert({
+        id: data.user.id,
+        email: data.user.email,
+        name: data.user.user_metadata?.full_name
+    });
 
     return res.json({
         user: {

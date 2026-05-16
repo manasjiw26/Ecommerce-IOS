@@ -4,6 +4,7 @@ import UIKit
 struct ProductDetailView: View {
     let product: Product
     @EnvironmentObject var cartManager: CartManager
+    @EnvironmentObject var productViewModel: ProductViewModel
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @State private var similarProducts: [Product] = []
     @State private var isLoadingSimilar = true
@@ -202,6 +203,12 @@ struct ProductDetailView: View {
         }
         .onAppear {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
+            productViewModel.activeProductId = product.id
+        }
+        .onDisappear {
+            if productViewModel.activeProductId == product.id {
+                productViewModel.activeProductId = nil
+            }
         }
         .task {
             // Load similar products asynchronously

@@ -6,6 +6,7 @@ class ProductViewModel: ObservableObject {
     @Published var products: [Product] = []
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var activeProductId: Int? = nil
     
     func fetchProducts() async {
         // Only show full-page skeleton if we have no products yet

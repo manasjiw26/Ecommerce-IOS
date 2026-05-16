@@ -8,6 +8,7 @@ struct Product: Codable, Identifiable, Equatable {
     let imageUrl: String?
     let category: String?
     let stock: Int?
+    let tags: [String]?
     let aiReasoning: String?
     let tags: [String]?
     
