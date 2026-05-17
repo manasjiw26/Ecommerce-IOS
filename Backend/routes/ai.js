@@ -344,12 +344,7 @@ router.post('/recommend', async (req, res) => {
 // VISUAL SEARCH ROUTES
 // ─────────────────────────────────────────────
 
-const STORAGE_BASE = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
-
 function fixImageUrl(product) {
-    if (product.image_url && !product.image_url.startsWith('http')) {
-        product.image_url = `${STORAGE_BASE}/${encodeURIComponent(product.image_url)}`;
-    }
     return product;
 }
 

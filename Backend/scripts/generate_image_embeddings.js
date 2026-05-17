@@ -15,13 +15,10 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const STORAGE_BASE =
-    'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
-
 function buildImageUrl(raw) {
     if (!raw) return null;
     if (raw.startsWith('http')) return raw;
-    return `${STORAGE_BASE}/${encodeURIComponent(raw)}`;
+    return null;
 }
 
 async function main() {

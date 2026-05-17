@@ -6,9 +6,7 @@ const { GoogleGenAI } = require('@google/genai');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, apiVersion: 'v1' });
 
-const STORAGE = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
 const fixImg = (p) => {
-    if (p?.image_url && !p.image_url.startsWith('http')) p.image_url = `${STORAGE}/${encodeURIComponent(p.image_url)}`;
     return p;
 };
 
@@ -376,4 +374,3 @@ Return ONLY valid JSON:
 });
 
 module.exports = router;
-
