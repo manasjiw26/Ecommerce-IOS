@@ -1,4 +1,4 @@
-# Hearth & Table iOS Ecommerce App
+# iOS Ecommerce App
 
 Hearth & Table is a full-stack iOS ecommerce app for home, kitchen, gift, and registry shopping. It includes product browsing, authentication, cart, checkout, orders, AI search, visual search, chat assistance, and registry features.
 
