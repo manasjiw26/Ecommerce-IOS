@@ -688,9 +688,11 @@ async function pipelineSearch(query, device_id, limit = 20) {
 async function upsertStyleProfile(device_id) {
     const { data: events, error: eErr } = await supabase
         .from('user_events')
-        .select('product_id, created_at')
+        // user_events historically used `timestamp`; newer tables sometimes use `created_at`.
+        // We standardize on `timestamp` here to match the existing prod schema.
+        .select('product_id, timestamp')
         .eq('device_id', device_id)
-        .order('created_at', { ascending: false })
+        .order('timestamp', { ascending: false })
         .limit(30);
     if (eErr) throw eErr;
 
