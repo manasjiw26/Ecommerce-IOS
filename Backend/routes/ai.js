@@ -1094,13 +1094,16 @@ Cart items: ${JSON.stringify(items.map(i => ({ name: i.name, category: i.categor
             ai = await askGeminiJSON(prompt);
         }
 
-        const out = {
-            label: ai?.label || label,
-            confidence: typeof ai?.confidence === 'number' ? ai.confidence : (label === 'unknown' ? 0.4 : 0.75),
-            reason: ai?.reason || 'Derived from cart contents.',
-            recommended_tags: ai?.recommended_tags || (label === 'unknown' ? [] : [label]),
-            suggested_next_actions: ai?.suggested_next_actions || [],
-        };
+	        const out = {
+	            label: ai?.label || label,
+	            confidence: typeof ai?.confidence === 'number' ? ai.confidence : (label === 'unknown' ? 0.4 : 0.75),
+	            reason: ai?.reason || 'Derived from cart contents.',
+	            recommended_tags: ai?.recommended_tags || (label === 'unknown' ? [] : [label]),
+	            suggested_next_actions: ai?.suggested_next_actions || [],
+	        };
+
+	        // Back-compat for clients/tests expecting `occasion`
+	        out.occasion = out.label;
 
         // Best-effort log: store parsed_intent + result_count in recent_searches if available
         if (device_id) {
@@ -1206,12 +1209,40 @@ Products: ${JSON.stringify((products || []).map(p => ({ id: p.id, name: p.name, 
 });
 
 // POST /ai/bundle-build
-// Body: { cart_items: [...] } OR { product_ids: [...] }
+// Body: { theme, budget } OR { cart_items: [...] } OR { product_ids: [...] }
 router.post('/bundle-build', async (req, res) => {
     try {
-        const { cart_items, product_ids, device_id } = req.body || {};
+        const { cart_items, product_ids, device_id, theme, budget } = req.body || {};
         const items = normalizeCartItems(cart_items);
         const ids = Array.isArray(product_ids) ? product_ids.filter(Boolean) : [];
+
+        // Theme-based bundle (used by docs + demo flows)
+        const themeStr = typeof theme === 'string' ? theme.trim() : '';
+        if (themeStr) {
+            const maxBudget = budget == null ? null : Number(budget);
+            const suggestions = await pipelineSearch(themeStr, device_id, 50);
+            const products = (suggestions || []).filter(Boolean);
+
+            // Pick items until we hit budget (best-effort)
+            const picked = [];
+            let total = 0;
+            for (const p of products) {
+                const price = Number(p.price || 0);
+                if (!price) continue;
+                if (maxBudget != null && maxBudget > 0 && total + price > maxBudget) continue;
+                picked.push(p);
+                total += price;
+                if (picked.length >= 8) break;
+            }
+
+            return res.json({
+                bundle_name: themeStr,
+                theme: themeStr,
+                budget: maxBudget,
+                total_price: total,
+                products: picked,
+            });
+        }
 
         let seedProducts = [];
         if (items.length) {
@@ -1258,21 +1289,39 @@ router.post('/chat-session', async (req, res) => {
         if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ error: 'messages required' });
 
         const sid = session_id || safeUuid();
-        if (!process.env.GEMINI_API_KEY) return res.status(501).json({ error: 'GEMINI_API_KEY not set for chat-session' });
+        const userLast = String(messages[messages.length - 1]?.content || '').trim();
 
-        const contents = messages.map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: String(m.content || '') }]
-        }));
+        let assistantText = '';
 
-        const response = await ai.models.generateContent({
-            model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
-            systemInstruction: system || 'You are a helpful shopping assistant.',
-            contents,
-            generationConfig: { maxOutputTokens: Number(max_tokens || 800), temperature: 0.7 }
-        });
+        // Prefer Gemini when available, but fall back to a deterministic local response if quotas are hit.
+        if (process.env.GEMINI_API_KEY) {
+            try {
+                const contents = messages.map((m) => ({
+                    role: m.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: String(m.content || '') }]
+                }));
 
-        const assistantText = response.text();
+                const response = await ai.models.generateContent({
+                    model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+                    systemInstruction: system || 'You are a helpful shopping assistant.',
+                    contents,
+                    generationConfig: { maxOutputTokens: Number(max_tokens || 800), temperature: 0.7 }
+                });
+                assistantText = response.text();
+            } catch (_) {
+                assistantText = '';
+            }
+        }
+
+        if (!assistantText) {
+            const query = userLast || 'kitchen essentials';
+            const suggestions = await pipelineSearch(query, device_id, 8);
+            const top = (suggestions || []).slice(0, 5);
+            assistantText =
+                `Here are a few strong picks based on "${query}": ` +
+                top.map((p) => `${p.name} ($${Number(p.price || 0).toFixed(2)})`).join(', ') +
+                `.`;
+        }
 
         // Persist (best-effort)
         try {
@@ -1285,7 +1334,8 @@ router.post('/chat-session', async (req, res) => {
             }]);
         } catch (_) {}
 
-        return res.json({ session_id: sid, content: [{ text: assistantText }] });
+        // `reply` is kept for back-compat with earlier iOS builds.
+        return res.json({ session_id: sid, reply: assistantText, content: [{ text: assistantText }] });
     } catch (e) {
         if (missingTable(e)) return res.status(501).json({ error: 'Missing ai_conversation_history table. Ensure migrations ran.' });
         return res.status(500).json({ error: e.message });

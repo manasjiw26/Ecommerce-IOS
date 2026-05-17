@@ -112,24 +112,42 @@ router.post('/move-to-registry', async (req, res) => {
         const { data: product, error: pErr } = await supabase.from('products').select('id, price').eq('id', product_id).single();
         if (pErr) return res.status(500).json({ error: pErr.message, code: 500 });
 
-        const { data: registryItem, error: rErr } = await supabase
+        // registry_items has a uniqueness constraint on (registry_id, product_id).
+        // Make this endpoint idempotent: if the item already exists, increment quantity_requested.
+        const { data: existing, error: exErr } = await supabase
             .from('registry_items')
-            .insert([
-                {
-                    registry_id,
-                    product_id,
-                    quantity_requested: quantity_requested ?? 1,
-                    price_snapshot: Number(product?.price || 0),
-                    ai_reason: ai_reason || null
-                }
-            ])
+            .select('id, quantity_requested')
+            .eq('registry_id', registry_id)
+            .eq('product_id', product_id)
+            .maybeSingle();
+        if (exErr) return res.status(500).json({ error: exErr.message, code: 500 });
+
+        const deltaQty = Number(quantity_requested ?? 1);
+        const nextQty = Number(existing?.quantity_requested || 0) + deltaQty;
+
+        // Use upsert so we never 500 on uniqueness conflicts. If the row exists, we "update" it to nextQty.
+        const { data: registryItem, error: upsertErr } = await supabase
+            .from('registry_items')
+            .upsert(
+                [
+                    {
+                        id: existing?.id,
+                        registry_id,
+                        product_id,
+                        quantity_requested: nextQty,
+                        price_snapshot: Number(product?.price || 0),
+                        ai_reason: ai_reason || null
+                    }
+                ],
+                { onConflict: 'registry_id,product_id' }
+            )
             .select()
             .single();
-        if (rErr) return res.status(500).json({ error: rErr.message, code: 500 });
+        if (upsertErr) return res.status(500).json({ error: upsertErr.message, code: 500 });
 
         await supabase.from('save_for_later').delete().eq('device_id', device_id).eq('product_id', product_id);
 
-        return res.json({ success: true, registry_item: registryItem });
+        return res.json({ success: true, registry_item: registryItem, already_existed: Boolean(existing?.id) });
     } catch (e) {
         console.error('[POST /cart/move-to-registry]:', e.message);
         return res.status(500).json({ error: e.message, code: 500 });
