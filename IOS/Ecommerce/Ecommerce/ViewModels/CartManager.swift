@@ -21,7 +21,45 @@ class CartManager: ObservableObject {
     @Published private(set) var items: [CartItem] = []
     private let saveKey = "SavedCart"
     private var cancellables = Set<AnyCancellable>()
-    
+
+    // MARK: - Promo code
+    /// Applied promo code string (nil if none applied).
+    @Published private(set) var appliedPromoCode: String? = nil
+    /// Discount percentage (0–100).
+    @Published private(set) var promoDiscountPercent: Double = 0.0
+
+    /// Flat discount amount derived from current subtotal × discount %.
+    var promoDiscountAmount: Double {
+        guard promoDiscountPercent > 0 else { return 0 }
+        let subtotal = items.reduce(0) { $0 + ($1.product.price * Double($1.quantity)) }
+        return subtotal * promoDiscountPercent / 100.0
+    }
+
+    /// Validates and applies a promo code. Returns an error message if invalid, nil on success.
+    @discardableResult
+    func applyPromo(code: String) -> String? {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        // Mock promo codes for demo — replace with a backend call when ready.
+        let validCodes: [String: Double] = [
+            "SAVE10": 10.0,
+            "SAVE20": 20.0,
+            "FIRST15": 15.0,
+            "WS25": 25.0
+        ]
+        if let discount = validCodes[normalized] {
+            appliedPromoCode = normalized
+            promoDiscountPercent = discount
+            return nil
+        } else {
+            return "Invalid or expired promo code."
+        }
+    }
+
+    func removePromo() {
+        appliedPromoCode = nil
+        promoDiscountPercent = 0.0
+    }
+
     init() {
         loadCart()
         
@@ -91,55 +129,57 @@ class CartManager: ObservableObject {
 
     func addToCart(product: Product, quantity: Int) {
         guard quantity != 0 else { return }
+
+        // 1. Optimistic local update — always persisted immediately
         if let index = items.firstIndex(where: { $0.product.id == product.id }) {
             items[index].quantity += quantity
             if items[index].quantity < 1 { items[index].quantity = 1 }
-            if let user = AuthSession.shared.currentUser {
-                Task {
-                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: quantity)
-                    await fetchBackendCart(userId: user.id)
-                }
-            }
         } else {
-            let newItem = CartItem(product: product, quantity: max(1, quantity))
-            items.append(newItem)
-            if let user = AuthSession.shared.currentUser {
-                Task {
-                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: quantity)
-                    await fetchBackendCart(userId: user.id)
-                }
-            }
+            items.append(CartItem(product: product, quantity: max(1, quantity)))
         }
         RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_add")
         saveCart()
-    }
-    
-    func removeFromCart(product: Product) {
-        if let index = items.firstIndex(where: { $0.product.id == product.id }) {
-            let item = items[index]
-            if items[index].quantity > 1 {
-                items[index].quantity -= 1
-                if let user = AuthSession.shared.currentUser {
-                    Task {
-                        // The backend `POST /cart` endpoint updates or inserts. 
-                        // Wait, it ADDS quantity. We need a way to set or decrement.
-                        // Wait! The backend route `POST /cart` does: `quantity: existingItem.quantity + quantity`.
-                        // If we pass `-1`, it decrements!
-                        _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: -1)
-                        await fetchBackendCart(userId: user.id)
-                    }
-                }
-            } else {
-                let backendIdToRemove = item.backendId
-                items.remove(at: index)
-                if AuthSession.shared.currentUser != nil, let backendId = backendIdToRemove {
-                    Task {
-                        try? await APIService.shared.removeFromCart(itemId: backendId)
-                    }
-                }
+
+        // 2. Backend sync — only refreshes local state if the API call SUCCEEDS.
+        // Never calls fetchBackendCart on failure to avoid wiping optimistic state.
+        guard let user = AuthSession.shared.currentUser else { return }
+        Task {
+            do {
+                try await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: quantity)
+                await fetchBackendCart(userId: user.id)
+            } catch {
+                print("[CartManager] Backend addToCart failed, keeping local state: \(error.localizedDescription)")
             }
-            RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
-            saveCart()
+        }
+    }
+
+    func removeFromCart(product: Product) {
+        guard let index = items.firstIndex(where: { $0.product.id == product.id }) else { return }
+        let item = items[index]
+
+        // 1. Optimistic local update
+        if items[index].quantity > 1 {
+            items[index].quantity -= 1
+        } else {
+            items.remove(at: index)
+        }
+        RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
+        saveCart()
+
+        // 2. Backend sync — only refresh on success
+        guard let user = AuthSession.shared.currentUser else { return }
+        Task {
+            do {
+                // Backend POST /cart adds quantity; passing -1 decrements
+                try await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: -1)
+                await fetchBackendCart(userId: user.id)
+            } catch {
+                // Fallback: try delete if item backendId is known
+                if let backendId = item.backendId {
+                    try? await APIService.shared.removeFromCart(itemId: backendId)
+                }
+                print("[CartManager] Backend removeFromCart failed, keeping local state: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -157,6 +197,7 @@ class CartManager: ObservableObject {
     
     func removeAll() {
         items.removeAll()
+        removePromo()
         saveCart()
         // Optionally clear backend cart if needed, but OrderManager usually handles clearing on success.
     }

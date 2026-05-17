@@ -1,265 +1,76 @@
 import SwiftUI
 
+// MARK: - BagView
+
 struct BagView: View {
     @EnvironmentObject var cartManager: CartManager
 
-    @StateObject private var bagVM = BagViewModel()
-    @StateObject private var occasionVM = OccasionViewModel()
-    @StateObject private var pairItWithVM = PairItWithViewModel()
-    @StateObject private var savedVM = SavedForLaterViewModel()
+    @StateObject private var bagVM       = BagViewModel()
+    @StateObject private var savedVM     = SavedForLaterViewModel()
 
-    @State private var showSaved = false
-    @State private var showCheckout = false
-    @State private var scrollToAddOnsTick: Int = 0
+    @State private var showSaved         = false
+    @State private var showCheckout      = false
+    @State private var undo: UndoState?  = nil
+    @State private var showExpressAlert  = false
 
-    @State private var undo: UndoState? = nil
+    // Promo
+    @State private var promoFieldText    = ""
+    @State private var promoExpanded     = false
+    @State private var promoError: String? = nil
+    @State private var promoApplying     = false
 
     struct UndoState: Equatable {
         let product: Product
         let quantity: Int
     }
 
-    private var selectedItems: [CartItem] { bagVM.selectedItems(from: cartManager.items) }
-    private var selectedSubtotal: Double { bagVM.subtotal(for: selectedItems) }
+    private var subtotal: Double {
+        cartManager.items.reduce(0) { $0 + ($1.product.price * Double($1.quantity)) }
+    }
+    private var discount: Double { cartManager.promoDiscountAmount }
+    private var grandTotal: Double { max(0, subtotal - discount) }
 
-    private var outOfStockSelected: [CartItem] {
-        selectedItems.filter { item in
+    private var hasOutOfStock: Bool {
+        cartManager.items.contains { item in
             let available = bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999)
             return available < item.quantity
         }
     }
 
     private var canCheckout: Bool {
-        !selectedItems.isEmpty && outOfStockSelected.isEmpty && !bagVM.isCheckingStock
+        !cartManager.items.isEmpty && !hasOutOfStock && !bagVM.isCheckingStock
     }
 
-    private var heroImageUrl: String? {
-        // Prefer a real product image from the bag; fall back to a stable demo image.
-        cartManager.items.first?.product.imageUrl
-            ?? "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/jason_briscoe_kitchen.jpg"
-    }
+    // MARK: - Body
 
     var body: some View {
-        ScrollViewReader { proxy in
-            List {
+        ZStack(alignment: .bottom) {
+            Group {
                 if cartManager.items.isEmpty {
-                    Section {
-                        BagHeroHeader(
-                            imageUrl: heroImageUrl,
-                            eyebrow: "THE SHOPPING BAG",
-                            title: "Start with something you love.",
-                            subtitle: "Add a few essentials and we’ll build bundles and smart add-ons around your picks.",
-                            height: 300
-                        )
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                    }
-
-                    Section {
-                        VStack(spacing: 14) {
-                            Button {
-                                NotificationCenter.default.post(name: .goToShopTab, object: nil)
-                            } label: {
-                                Label("Shop Bestsellers", systemImage: "bag.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.black)
-                            .clipShape(Capsule())
-                            .controlSize(.large)
-
-                            Button {
-                                showSaved = true
-                            } label: {
-                                Label("View Saved Items", systemImage: "bookmark")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.primary)
-                            .clipShape(Capsule())
-                            .controlSize(.large)
-                        }
-                        .padding(.vertical, 8)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowSeparator(.hidden)
-                    }
+                    emptyState
                 } else {
-                    // Hero header (Registry-style)
-                    Section {
-                        BagHeroHeader(
-                            imageUrl: heroImageUrl,
-                            eyebrow: "THE SHOPPING BAG",
-                            title: "Complete your kitchen, beautifully.",
-                            subtitle: nil,
-                            height: 260
-                        )
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                    }
-
-                    // Primary actions row
-                    Section {
-                        HStack(spacing: 14) {
-                            Button {
-                                showSaved = true
-                            } label: {
-                                Label("Saved", systemImage: "bookmark")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.black)
-                            .clipShape(Capsule())
-
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    proxy.scrollTo("bag_addons_anchor", anchor: .top)
-                                }
-                            } label: {
-                                Label("Complete Your Set", systemImage: "sparkles")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.black)
-                            .clipShape(Capsule())
-                        }
-                        .padding(.vertical, 6)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowSeparator(.hidden)
-                    }
-
-                    Section {
-                        BagIntelligenceView(
-                            coach: bagVM.coach,
-                            resurface: bagVM.resurface,
-                            occasion: occasionVM.currentOccasion,
-                            coachError: bagVM.coachError,
-                            onOpenSaved: { showSaved = true },
-                            onOpenAddOns: {
-                                scrollToAddOnsTick += 1
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    proxy.scrollTo("bag_addons_anchor", anchor: .top)
-                                }
-                            }
-                        )
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    .listRowSeparator(.hidden)
-
-                    Section(header:
-                        Text("My Bag")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                            .padding(.bottom, 4)
-                            .textCase(nil)
-                    ) {
-                        ForEach(cartManager.items) { item in
-                            BagItemRow(
-                                item: item,
-                                availableStock: bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999),
-                                isSelected: bagVM.selectedProductIds.contains(item.product.id),
-                                onToggleSelected: { bagVM.selectedProductIds.toggle(item.product.id) },
-                                isEngravingOn: bagVM.addOnEngraving.contains(item.product.id),
-                                onToggleEngraving: { bagVM.addOnEngraving.toggle(item.product.id) },
-                                isProtectionOn: bagVM.addOnProtection.contains(item.product.id),
-                                onToggleProtection: { bagVM.addOnProtection.toggle(item.product.id) },
-                                onSaveForLater: {
-                                    Task {
-                                        try? await SavedForLaterService.shared.save(
-                                            deviceId: RecommendationEngine.shared.deviceId,
-                                            productId: item.product.id
-                                        )
-                                        bagVM.selectedProductIds.remove(item.product.id)
-                                        cartManager.removeLineItem(product: item.product)
-                                        await savedVM.refresh()
-                                        bagVM.savedCount = savedVM.items.count
-                                    }
-                                }
-                            )
-                            .environmentObject(cartManager)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.06), radius: 12, x: 0, y: 6)
-                            )
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .swipeActions(edge: .leading) {
-                                Button {
-                                    Task {
-                                        try? await SavedForLaterService.shared.save(
-                                            deviceId: RecommendationEngine.shared.deviceId,
-                                            productId: item.product.id
-                                        )
-                                        bagVM.selectedProductIds.remove(item.product.id)
-                                        cartManager.removeLineItem(product: item.product)
-                                        await savedVM.refresh()
-                                        bagVM.savedCount = savedVM.items.count
-                                    }
-                                } label: {
-                                    Label("Save", systemImage: "bookmark")
-                                }
-                                .tint(.orange)
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    bagVM.selectedProductIds.remove(item.product.id)
-                                    undo = UndoState(product: item.product, quantity: item.quantity)
-                                    cartManager.removeLineItem(product: item.product)
-                                    Task {
-                                        try? await Task.sleep(nanoseconds: 4_500_000_000)
-                                        if undo?.product.id == item.product.id { undo = nil }
-                                    }
-                                } label: {
-                                    Label("Remove", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-
-                    Section(header:
-                        Text("Complete Your Set")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                            .padding(.bottom, 4)
-                            .textCase(nil)
-                    ) {
-                        Color.clear
-                            .frame(height: 1)
-                            .id("bag_addons_anchor")
-                        BagBundleStrip(
-                            bundle: bagVM.coach == nil ? nil : nil,
-                            products: bagVMBundleProducts,
-                            onAdd: { p in cartManager.addToCart(product: p) }
-                        )
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowSeparator(.hidden)
-                    }
+                    loadedCart
                 }
             }
+            .animation(.easeInOut(duration: 0.25), value: cartManager.items.isEmpty)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Color(.systemBackground))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("Bag (\(selectedItems.count))")
+                Text("Cart")
                     .font(.headline)
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showSaved = true } label: {
+                Button {
+                    showSaved = true
+                } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "bookmark")
                         if bagVM.savedCount > 0 {
                             Text("\(bagVM.savedCount)")
                                 .font(.caption2)
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 6)
+                                .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .background(Color.red)
                                 .clipShape(Capsule())
@@ -275,18 +86,8 @@ struct BagView: View {
                 .environmentObject(cartManager)
         }
         .sheet(isPresented: $showCheckout) {
-            CheckoutSheetView(checkoutItems: selectedItems, addOnTotal: selectedAddOnTotal)
+            CheckoutSheetView(checkoutItems: cartManager.items, addOnTotal: 0)
                 .environmentObject(cartManager)
-        }
-        .safeAreaInset(edge: .bottom) {
-            if !cartManager.items.isEmpty {
-                BagFooter(
-                    subtotal: selectedSubtotal,
-                    canCheckout: canCheckout,
-                    isChecking: bagVM.isCheckingStock,
-                    onCheckout: { showCheckout = true }
-                )
-            }
         }
         .overlay(alignment: .bottom) {
             if let undo {
@@ -297,139 +98,585 @@ struct BagView: View {
                         self.undo = nil
                     }
                 )
-                .padding(.bottom, 86)
+                .padding(.bottom, cartManager.items.isEmpty ? 24 : 110)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: undo != nil)
             }
+        }
+        .alert("Express Checkout", isPresented: $showExpressAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("UPI express checkout is coming soon. Use the standard checkout for now.")
         }
         .task { await refreshAll() }
         .onChange(of: cartManager.items) { _ in Task { await refreshAll() } }
     }
 
-    // MARK: - Bundles
-    @State private var bagVMBundleProducts: [Product] = []
+    // MARK: - Empty State
 
-    private var selectedAddOnTotal: Double {
-        let engraving = selectedItems.reduce(0) { $0 + (bagVM.addOnEngraving.contains($1.product.id) ? 15.0 * Double($1.quantity) : 0) }
-        let protection = selectedItems.reduce(0) { $0 + (bagVM.addOnProtection.contains($1.product.id) ? 49.0 : 0) }
-        return engraving + protection
-    }
+    private var emptyState: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 16) {
+                Image(systemName: "bag")
+                    .font(.system(size: 52, weight: .ultraLight))
+                    .foregroundColor(.secondary)
 
-    private func refreshBundles() async {
-        do {
-            // Use bundle-build with product ids + theme/budget for accessory picks.
-            let resp = try await CartIntelligenceService.shared.bundleBuild(theme: "complete your set", budget: 250, activeItemIds: selectedItems.map { $0.product.id }, deviceId: RecommendationEngine.shared.deviceId)
-            bagVMBundleProducts = resp.products
-        } catch {
-            bagVMBundleProducts = []
+                Text("Your cart is empty")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
+                Text("Free delivery on orders over ₹499")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button {
+                    NotificationCenter.default.post(name: .goToShopTab, object: nil)
+                } label: {
+                    Text("Start Shopping")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.primary)
+                        .foregroundColor(Color(UIColor.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal, 32)
+            Spacer()
+
+            // Below-fold: Recommendations (non-competing)
+            if bagVM.savedCount > 0 {
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                    Button {
+                        showSaved = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "bookmark.fill")
+                                .foregroundColor(.secondary)
+                            Text("You have \(bagVM.savedCount) saved item\(bagVM.savedCount == 1 ? "" : "s")")
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                    }
+                }
+            }
         }
     }
+
+    // MARK: - Loaded Cart
+
+    private var loadedCart: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                // Items
+                itemsSection
+
+                // Promo
+                promoSection
+                    .padding(.top, 8)
+
+                // Order summary
+                orderSummarySection
+                    .padding(.top, 8)
+
+                // Bottom padding so content clears the sticky footer
+                Color.clear.frame(height: 130)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+        }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom) {
+            cartFooter
+        }
+    }
+
+    // MARK: - Items Section
+
+    private var itemsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Items (\(cartManager.items.count))")
+                .font(.footnote)
+                .fontWeight(.semibold)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 4)
+
+            ForEach(cartManager.items) { item in
+                let available = bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999)
+                BagItemRow(
+                    item: item,
+                    availableStock: available,
+                    onRemove: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            undo = UndoState(product: item.product, quantity: item.quantity)
+                            cartManager.removeLineItem(product: item.product)
+                        }
+                        Task {
+                            try? await Task.sleep(nanoseconds: 5_000_000_000)
+                            if undo?.product.id == item.product.id {
+                                withAnimation { undo = nil }
+                            }
+                        }
+                    },
+                    onSaveForLater: {
+                        Task {
+                            try? await SavedForLaterService.shared.save(
+                                deviceId: RecommendationEngine.shared.deviceId,
+                                productId: item.product.id
+                            )
+                            cartManager.removeLineItem(product: item.product)
+                            await savedVM.refresh()
+                            bagVM.savedCount = savedVM.items.count
+                        }
+                    },
+                    onDecrement: {
+                        if item.quantity <= 1 {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                undo = UndoState(product: item.product, quantity: 1)
+                                cartManager.removeLineItem(product: item.product)
+                            }
+                            Task {
+                                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                if undo?.product.id == item.product.id {
+                                    withAnimation { undo = nil }
+                                }
+                            }
+                        } else {
+                            cartManager.removeFromCart(product: item.product)
+                        }
+                    },
+                    onIncrement: {
+                        guard available == 0 || available >= 999 || item.quantity < available else { return }
+                        cartManager.addToCart(product: item.product)
+                    }
+                )
+                .environmentObject(cartManager)
+
+                if item.id != cartManager.items.last?.id {
+                    Divider()
+                        .padding(.leading, 80)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(UIColor.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
+    }
+
+    // MARK: - Promo Section
+
+    private var promoSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Collapsed / applied state
+            if let code = cartManager.appliedPromoCode {
+                HStack(spacing: 10) {
+                    Image(systemName: "tag.fill")
+                        .foregroundColor(.green)
+                        .font(.subheadline)
+                    Text(code)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                    Text("applied")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Remove") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            cartManager.removePromo()
+                            promoFieldText = ""
+                            promoError = nil
+                        }
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.red)
+                }
+                .padding(14)
+                .background(Color.green.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.green.opacity(0.3), lineWidth: 1)
+                )
+            } else {
+                // Expandable promo field
+                VStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            promoExpanded.toggle()
+                            if !promoExpanded { promoError = nil }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "tag")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
+                            Text("Have a promo code?")
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: promoExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(14)
+                    }
+                    .buttonStyle(.plain)
+
+                    if promoExpanded {
+                        Divider().padding(.horizontal, 14)
+                        HStack(spacing: 10) {
+                            TextField("Enter promo code", text: $promoFieldText)
+                                .font(.subheadline)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.characters)
+                                .padding(.vertical, 10)
+                            Button {
+                                applyPromo()
+                            } label: {
+                                if promoApplying {
+                                    ProgressView()
+                                        .frame(width: 60)
+                                } else {
+                                    Text("Apply")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .frame(width: 60)
+                                }
+                            }
+                            .disabled(promoFieldText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || promoApplying)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, promoError == nil ? 14 : 6)
+
+                        if let err = promoError {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 14)
+                                .padding(.bottom, 12)
+                        }
+                    }
+                }
+                .background(Color(UIColor.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
+            }
+        }
+    }
+
+    // MARK: - Order Summary
+
+    private var orderSummarySection: some View {
+        VStack(spacing: 0) {
+            summaryRow(label: "Subtotal", value: formatPrice(subtotal))
+            Divider().padding(.horizontal, 14)
+
+            if discount > 0, let code = cartManager.appliedPromoCode {
+                summaryRow(label: "Promo (\(code))", value: "−\(formatPrice(discount))", valueColor: .green)
+                Divider().padding(.horizontal, 14)
+            }
+
+            summaryRow(label: "Shipping", value: subtotal >= 499 ? "Free" : "₹49", valueColor: subtotal >= 499 ? .green : .primary)
+            Divider().padding(.horizontal, 14)
+
+            HStack {
+                Text("Total")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                Spacer()
+                Text(formatPrice(grandTotal + (subtotal < 499 ? 49 : 0)))
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+        .background(Color(UIColor.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
+    }
+
+    @ViewBuilder
+    private func summaryRow(label: String, value: String, valueColor: Color = .primary) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundColor(valueColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Footer
+
+    private var cartFooter: some View {
+        VStack(spacing: 0) {
+            // Out-of-stock warning banner
+            if hasOutOfStock {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.subheadline)
+                    Text("Some items are out of stock. Remove them to continue.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.orange.opacity(0.1))
+            }
+
+            Divider()
+
+            VStack(spacing: 10) {
+                // Express checkout row
+                HStack(spacing: 12) {
+                    Text("Express")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    ForEach(["UPI", "GPay", "PhonePe"], id: \.self) { method in
+                        Button {
+                            showExpressAlert = true
+                        } label: {
+                            Text(method)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color(UIColor.secondarySystemGroupedBackground))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                // Primary CTA
+                Button {
+                    if UserDefaults.standard.bool(forKey: "isLoggedIn") {
+                        showCheckout = true
+                    } else {
+                        NotificationCenter.default.post(name: .requireAuth, object: nil)
+                    }
+                } label: {
+                    HStack {
+                        if bagVM.isCheckingStock {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text(canCheckout
+                                 ? "Checkout · \(formatPrice(grandTotal + (subtotal < 499 ? 49 : 0)))"
+                                 : hasOutOfStock ? "Fix items to continue" : "Checking stock…")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(canCheckout ? Color.primary : Color.secondary.opacity(0.4))
+                    .foregroundColor(Color(UIColor.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .disabled(!canCheckout)
+                .padding(.horizontal, 16)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func formatPrice(_ value: Double) -> String {
+        "₹\(String(format: "%.0f", value))"
+    }
+
+    private func applyPromo() {
+        promoApplying = true
+        promoError = nil
+        let error = cartManager.applyPromo(code: promoFieldText)
+        withAnimation(.easeInOut(duration: 0.2)) {
+            promoError = error
+            if error == nil {
+                promoExpanded = false
+                promoFieldText = ""
+            }
+        }
+        promoApplying = false
+    }
+
+    // MARK: - Refresh
 
     private func refreshAll() async {
         await savedVM.refresh()
         bagVM.savedCount = savedVM.items.count
-
-        bagVM.syncSelection(with: cartManager.items)
         await bagVM.refreshStock(items: cartManager.items)
-        bagVM.autoDeselectOverStock(items: cartManager.items)
-
-        occasionVM.detectOccasion(from: cartManager.items)
-        pairItWithVM.fetchRecommendations(cartItems: selectedItems)
-
-        await bagVM.refreshIntelligence(selectedItems: selectedItems)
-        await refreshBundles()
     }
 }
 
-private struct BagFooter: View {
-    let subtotal: Double
-    let canCheckout: Bool
-    let isChecking: Bool
-    let onCheckout: () -> Void
+// MARK: - BagItemRow
+
+private struct BagItemRow: View {
+    let item: CartItem
+    let availableStock: Int
+    let onRemove: () -> Void
+    let onSaveForLater: () -> Void
+    let onDecrement: () -> Void
+    let onIncrement: () -> Void
+
+    @EnvironmentObject var cartManager: CartManager
+
+    private var isOutOfStock: Bool { availableStock == 0 }
+    private var exceedsStock: Bool { availableStock > 0 && availableStock < 999 && item.quantity > availableStock }
+    private var canIncrement: Bool { availableStock == 0 || availableStock >= 999 || item.quantity < availableStock }
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Subtotal")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("$\(String(format: "%.2f", subtotal))")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-            }
-            Spacer()
-            Button(action: onCheckout) {
-                if isChecking {
-                    ProgressView().tint(.white).frame(width: 130)
-                } else {
-                    Text(canCheckout ? "Checkout" : "Fix items")
-                        .frame(minWidth: 130)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.black)
-            .clipShape(Capsule())
-            .controlSize(.large)
-            .disabled(!canCheckout)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-    }
-}
-
-private struct BagHeroHeader: View {
-    let imageUrl: String?
-    let eyebrow: String
-    let title: String
-    let subtitle: String?
-    let height: CGFloat
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let imageUrl {
-                CachedImageView(urlString: imageUrl) { img in
-                    img.resizable().scaledToFill()
-                } placeholder: {
-                    Color(.systemGray5)
-                }
-                .frame(height: height)
-                .clipped()
-            } else {
-                Color(.systemGray5)
-                    .frame(height: height)
-            }
-
-            LinearGradient(colors: [Color.black.opacity(0.0), Color.black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
-                .frame(height: height)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(eyebrow)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white.opacity(0.9))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.18))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                // Thumbnail
+                if let url = item.product.imageUrl {
+                    CachedImageView(urlString: url) { img in
+                        img.resizable().scaledToFill()
+                    } placeholder: {
+                        Color(.systemGray5)
+                    }
+                    .frame(width: 64, height: 64)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        Group {
+                            if isOutOfStock {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.black.opacity(0.45))
+                                    .overlay(
+                                        Text("OUT\nOF\nSTOCK")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .multilineTextAlignment(.center)
+                                    )
+                            }
+                        }
+                    )
+                }
 
-                Text(title)
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.product.name)
                         .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.92))
-                        .lineLimit(3)
+                        .fontWeight(.medium)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("₹\(String(format: "%.0f", item.product.price))")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                }
+
+                Spacer()
+
+                // Quantity stepper
+                HStack(spacing: 4) {
+                    Button(action: onDecrement) {
+                        Image(systemName: item.quantity <= 1 ? "trash" : "minus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(item.quantity <= 1 ? .red : .primary)
+                            .frame(width: 30, height: 30)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("\(item.quantity)")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(minWidth: 22)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(exceedsStock ? .red : .primary)
+
+                    Button(action: onIncrement) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(canIncrement ? .primary : .secondary)
+                            .frame(width: 30, height: 30)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canIncrement)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 18)
+
+            // Stock warning pill + inline actions
+            if exceedsStock || isOutOfStock {
+                HStack(spacing: 8) {
+                    Label(
+                        isOutOfStock ? "Out of stock" : "Only \(availableStock) left",
+                        systemImage: "exclamationmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.orange)
+                    .accessibilityAddTraits(.isStaticText)
+                    .accessibilityLabel(isOutOfStock ? "Out of stock" : "Only \(availableStock) left")
+
+                    Spacer()
+
+                    Button("Remove") { onRemove() }
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.red)
+
+                    Button("Notify Me") { onSaveForLater() }
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.accentColor)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                onRemove()
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                onSaveForLater()
+            } label: {
+                Label("Save", systemImage: "bookmark")
+            }
+            .tint(.orange)
         }
     }
 }
+
+// MARK: - UndoSnackbar
 
 private struct UndoSnackbar: View {
     let text: String
@@ -445,147 +692,11 @@ private struct UndoSnackbar: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .padding(.horizontal, 16)
-    }
-}
-
-private struct BagBundleStrip: View {
-    let bundle: CartBundle?
-    let products: [Product]
-    let onAdd: (Product) -> Void
-
-    var body: some View {
-        if products.isEmpty {
-            Text("No add-ons right now.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        } else {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(products.prefix(12)) { p in
-                        VStack(alignment: .leading, spacing: 8) {
-                            AIRecommendationCard(product: p)
-                                .frame(width: 170)
-                            Button {
-                                onAdd(p)
-                            } label: {
-                                Text("+ Add")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .frame(width: 170)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-}
-
-private struct BagItemRow: View {
-    let item: CartItem
-    let availableStock: Int
-    let isSelected: Bool
-    let onToggleSelected: () -> Void
-
-    let isEngravingOn: Bool
-    let onToggleEngraving: () -> Void
-    let isProtectionOn: Bool
-    let onToggleProtection: () -> Void
-
-    let onSaveForLater: () -> Void
-
-    @EnvironmentObject var cartManager: CartManager
-
-    private var exceedsStock: Bool { availableStock < item.quantity }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Button(action: onToggleSelected) {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(isSelected ? .accentColor : .secondary)
-                }
-                .buttonStyle(.plain)
-
-                if let url = item.product.imageUrl {
-                    CachedImageView(urlString: url) { img in
-                        img.resizable().scaledToFill()
-                    } placeholder: { Color(.systemGray5) }
-                        .frame(width: 56, height: 56)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.product.name)
-                        .font(.subheadline)
-                        .lineLimit(2)
-                    Text("$\(String(format: "%.2f", item.product.price))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                HStack(spacing: 10) {
-                    Button { cartManager.removeFromCart(product: item.product) } label: {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(width: 32, height: 32)
-
-                    Text("\(item.quantity)")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(minWidth: 18)
-
-                    Button { cartManager.addToCart(product: item.product) } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundColor(item.quantity < availableStock ? .primary : .secondary)
-                    }
-                    .frame(width: 32, height: 32)
-                    .disabled(availableStock != 0 && availableStock < 999 && item.quantity >= availableStock)
-                }
-            }
-
-            if exceedsStock {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(availableStock == 0 ? "Out of stock" : "Only \(availableStock) available")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button("Save for Later", action: onSaveForLater)
-                        .font(.caption)
-                        .buttonStyle(.bordered)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle(isOn: .init(get: { isEngravingOn }, set: { _ in onToggleEngraving() })) {
-                    Text("Add Custom Engraving (+$15.00)")
-                        .font(.caption)
-                }
-                Toggle(isOn: .init(get: { isProtectionOn }, set: { _ in onToggleProtection() })) {
-                    Text("Add Appliance Protection Plan")
-                        .font(.caption)
-                }
-            }
-            .toggleStyle(.switch)
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private extension Set where Element == Int {
-    mutating func toggle(_ id: Int) {
-        if contains(id) { remove(id) } else { insert(id) }
+        .padding(.vertical, 13)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 4)
+        .padding(.horizontal, 16)
     }
 }

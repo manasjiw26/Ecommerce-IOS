@@ -226,15 +226,17 @@ struct ProductListView: View {
                             // MARK: — Product Grid
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(displayedProducts) { product in
-                                    NavigationLink(destination: ProductDetailView(product: product)) {
-                                        ProductCardView(product: product)
-                                            .onAppear {
-                                                if product.id == displayedProducts.last?.id {
-                                                    searchViewModel.loadMore()
+                                    ZStack(alignment: .bottomTrailing) {
+                                        NavigationLink(destination: ProductDetailView(product: product)) {
+                                            ProductCardView(product: product)
+                                                .onAppear {
+                                                    if product.id == displayedProducts.last?.id {
+                                                        searchViewModel.loadMore()
+                                                    }
                                                 }
-                                            }
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
                                     }
-                                    .buttonStyle(PlainButtonStyle())
                                 }
                             }
                             .padding(.horizontal, 12)
@@ -311,11 +313,13 @@ struct ProductListView: View {
 // MARK: — Product Grid Card
 struct ProductCardView: View {
     let product: Product
-    
+    @EnvironmentObject var cartManager: CartManager
+    @State private var addedToCart = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image
-            ZStack {
+            // Image + Quick-add button
+            ZStack(alignment: .bottomTrailing) {
                 if let imageUrlString = product.imageUrl {
                     CachedImageView(urlString: imageUrlString) { image in
                         GeometryReader { geo in
@@ -337,14 +341,35 @@ struct ProductCardView: View {
                     Rectangle()
                         .fill(Color(.systemGray6))
                         .aspectRatio(1, contentMode: .fit)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .foregroundColor(.gray)
-                        )
+                        .overlay(Image(systemName: "photo").foregroundColor(.gray))
                 }
+
+                // Quick-add button
+                Button {
+                    let impact = UIImpactFeedbackGenerator(style: .light)
+                    impact.impactOccurred()
+                    cartManager.addToCart(product: product)
+                    NotificationCenter.default.post(name: .addedToCart, object: product)
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        addedToCart = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation { addedToCart = false }
+                    }
+                } label: {
+                    Image(systemName: addedToCart ? "checkmark" : "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 30, height: 30)
+                        .background(addedToCart ? Color.green : Color.black.opacity(0.78))
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+                }
+                .padding(8)
+                .buttonStyle(PlainButtonStyle())
             }
             .clipShape(RoundedRectangle(cornerRadius: 0))
-            
+
             // Info
             VStack(alignment: .leading, spacing: 4) {
                 Text(product.name)
@@ -353,21 +378,22 @@ struct ProductCardView: View {
                     .foregroundColor(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                
-                Text("$\(String(format: "%.2f", product.price))")
+
+                Text("₹\(String(format: "%.0f", product.price))")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(height: 80, alignment: .topLeading)
+            .frame(height: 72, alignment: .topLeading)
         }
         .background(Color(UIColor.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.07), radius: 8, x: 0, y: 2)
     }
 }
+
 
 // MARK: — Category Chip
 struct CategoryChip: View {

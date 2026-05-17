@@ -302,6 +302,7 @@ struct ProductDetailView: View {
                     let impactMed = UIImpactFeedbackGenerator(style: .medium)
                     impactMed.impactOccurred()
                     cartManager.addToCart(product: product)
+                    NotificationCenter.default.post(name: .addedToCart, object: product)
                 }) {
                     Label("Add to Cart", systemImage: "cart.badge.plus")
                         .font(.subheadline)

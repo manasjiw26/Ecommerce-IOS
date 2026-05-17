@@ -61,7 +61,7 @@ struct PairItWithCardView: View {
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
-                Text("$\(String(format: "%.2f", recommendation.product.price))")
+                Text("₹\(String(format: "%.0f", recommendation.product.price))")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
 

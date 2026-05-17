@@ -41,7 +41,9 @@ class APIService {
         return try JSONDecoder().decode([BackendCartItem].self, from: data)
     }
     
-    func addToCart(userId: String, productId: Int, quantity: Int) async throws -> [BackendCartItem] {
+    /// Adds or increments a cart item. Returns the raw cart row (no joined product data).
+    @discardableResult
+    func addToCart(userId: String, productId: Int, quantity: Int) async throws -> [[String: Any]] {
         guard let url = URL(string: "\(APIService.baseURL)/cart") else {
             throw URLError(.badURL)
         }
@@ -53,14 +55,15 @@ class APIService {
             "product_id": productId,
             "quantity": quantity
         ])
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            throw NSError(domain: "Cart", code: 0,
+                          userInfo: [NSLocalizedDescriptionKey: msg ?? "Cart update failed"])
         }
-        // The backend returns the inserted/updated row, we can just decode it.
-        // It doesn't return the full `products` joined object, but we just need it to succeed.
-        return try JSONDecoder().decode([BackendCartItem].self, from: data)
+        // Response is a plain cart_items row (no nested products). Just return it raw.
+        return (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
     }
     
     func removeFromCart(itemId: Int) async throws {
