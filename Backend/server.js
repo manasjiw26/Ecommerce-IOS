@@ -45,6 +45,7 @@ app.use('/orders', require('./routes/orders'));
 app.use('/payment', require('./routes/payment'));
 app.use('/auth', require('./routes/auth'));
 app.use('/ai', require('./routes/ai'));
+app.use('/ai/registry', require('./routes/ai_registry'));
 app.use('/registry', require('./routes/registry'));
 app.use('/chat', require('./routes/chat'));
 
@@ -70,6 +71,10 @@ runMigrations();
 app.get('/', (req, res) => {
     res.json({ message: 'Welcome to ShopEase API!' });
 });
+
+app.get('/health', (req, res) =>
+    res.json({ status: 'ok', timestamp: new Date().toISOString(), env: process.env.NODE_ENV || 'development' })
+);
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

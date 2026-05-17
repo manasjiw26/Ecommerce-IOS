@@ -23,6 +23,33 @@ const ai = new GoogleGenAI({
     apiVersion: 'v1'
 });
 
+// ── Gemini JSON helpers (backend-at-night merge) ──────────────────────────────
+function stripJsonCodeFences(text) {
+    const t = String(text || '').trim();
+    return t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+}
+
+async function askGeminiJSON(prompt, { model } = {}) {
+    const chosenModel = model || process.env.GEMINI_MODEL_JSON || process.env.GEMINI_MODEL || 'gemini-1.5-flash-8b';
+    try {
+        const response = await ai.models.generateContent({
+            model: chosenModel,
+            contents: [{ role: 'user', parts: [{ text: String(prompt || '') }] }],
+            generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
+        });
+        const raw = stripJsonCodeFences(response.text());
+        return JSON.parse(raw);
+    } catch (e) {
+        console.error('Gemini JSON parse error:', e.message);
+        return null;
+    }
+}
+
+function missingTable(err) {
+    const msg = (err && err.message ? String(err.message) : '').toLowerCase();
+    return msg.includes('relation') && msg.includes('does not exist');
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  SEARCH — Delegated to modular pipeline
 // ══════════════════════════════════════════════════════════════════════════════
@@ -646,6 +673,361 @@ router.get('/regenerate_embeddings', async (req, res) => {
     } catch (error) {
         console.error('Critical Error in /regenerate_embeddings:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ─────────────────────────────────────────────
+// backend-at-night: Extra AI utility endpoints
+// ─────────────────────────────────────────────
+
+async function pipelineSearch(query, device_id, limit = 20) {
+    const results = await searchOrchestrator.execute(query, device_id, { limit, page: 1 });
+    return (results || []).map(fixImageUrl);
+}
+
+async function upsertStyleProfile(device_id) {
+    const { data: events, error: eErr } = await supabase
+        .from('user_events')
+        .select('product_id, created_at')
+        .eq('device_id', device_id)
+        .order('created_at', { ascending: false })
+        .limit(30);
+    if (eErr) throw eErr;
+
+    const productIds = [...new Set((events || []).map(x => x.product_id).filter(Boolean))];
+    let products = [];
+    if (productIds.length) {
+        const { data: pData, error: pErr } = await supabase
+            .from('products')
+            .select('id, category, price, tags')
+            .in('id', productIds);
+        if (pErr) throw pErr;
+        products = pData || [];
+    }
+
+    const { data: searches, error: sErr } = await supabase
+        .from('recent_searches')
+        .select('query')
+        .eq('device_id', device_id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+    if (sErr) throw sErr;
+
+    const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+    const avg = products.length ? (products.reduce((a, p) => a + Number(p.price || 0), 0) / products.length) : 0;
+    const recentQueries = (searches || []).map(s => s.query).filter(Boolean).slice(0, 10);
+
+    const prompt = `
+You are a premium home & kitchen e-commerce personalization engine.
+Given user signals, generate a style profile. Return ONLY valid JSON.
+Signals:
+- Recent categories: ${JSON.stringify(categories.slice(0, 5))}
+- Avg viewed price: ${avg.toFixed(2)}
+- Recent searches: ${JSON.stringify(recentQueries)}
+
+Return JSON shape:
+{"style_name":"Modern Home Chef","style_description":"...","top_categories":["Cookware"],"price_tier":"mid","personality_traits":["..."],"tagline":"...","recommended_collections":["..."]}
+`;
+
+    let profile = await askGeminiJSON(prompt);
+    if (!profile || !profile.style_name) {
+        profile = {
+            style_name: 'Classic Home Entertainer',
+            style_description: 'You enjoy making home feel welcoming, with reliable essentials that look great on the table.',
+            top_categories: categories.slice(0, 3),
+            price_tier: avg >= 150 ? 'premium' : avg >= 60 ? 'mid' : 'budget',
+            personality_traits: ['welcoming', 'practical', 'quality-focused'],
+            tagline: 'Warm home, great meals.',
+            recommended_collections: ['Everyday Essentials', 'Entertaining Classics', 'Premium Cookware']
+        };
+    }
+
+    const upsertPayload = {
+        device_id,
+        style_name: profile.style_name,
+        style_description: profile.style_description,
+        top_categories: profile.top_categories || [],
+        price_tier: profile.price_tier || null,
+        generated_at: new Date().toISOString()
+    };
+
+    const { data: saved, error: uErr } = await supabase
+        .from('user_style_profiles')
+        .upsert([upsertPayload], { onConflict: 'device_id' })
+        .select()
+        .single();
+    if (uErr) throw uErr;
+    return saved;
+}
+
+router.post('/style-detect', async (req, res) => {
+    try {
+        const { device_id } = req.body || {};
+        if (!device_id) return res.status(400).json({ error: 'device_id required' });
+        const profile = await upsertStyleProfile(device_id);
+        return res.json(profile);
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing DB tables for style profiles. Run Backend/migrations/new_features_schema.sql.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/style-profile', async (req, res) => {
+    try {
+        const device_id = String(req.query.device_id || '').trim();
+        if (!device_id) return res.status(400).json({ error: 'device_id required' });
+
+        const { data, error } = await supabase
+            .from('user_style_profiles')
+            .select('*')
+            .eq('device_id', device_id)
+            .maybeSingle();
+        if (error) throw error;
+
+        if (!data) return res.json(await upsertStyleProfile(device_id));
+
+        const ageMs = Date.now() - new Date(data.generated_at || data.updated_at || data.created_at || Date.now()).getTime();
+        if (ageMs > 24 * 3600000) return res.json(await upsertStyleProfile(device_id));
+        return res.json(data);
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing DB tables for style profiles. Run Backend/migrations/new_features_schema.sql.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/cart-coach', async (req, res) => {
+    try {
+        const { cart_items } = req.body || {};
+        if (!Array.isArray(cart_items)) return res.status(400).json({ error: 'cart_items array required' });
+
+        const prompt = `
+You are a premium home & kitchen shopping coach analyzing a customer's cart.
+Cart contents: ${JSON.stringify(cart_items)}
+Analyze the cart and give smart feedback. Look for: missing items that complete a set, duplicate categories, imbalanced spending, great add-ons.
+Return ONLY valid JSON:
+{"score":72,"headline":"Great start, but you're missing a few essentials","insights":[{"type":"missing","message":"..."}],"top_suggestion":"..."}
+`;
+        let analysis = await askGeminiJSON(prompt);
+        if (!analysis || typeof analysis.score !== 'number') {
+            analysis = {
+                score: 70,
+                headline: 'Good start — consider a few add-ons',
+                insights: [{ type: 'missing', message: 'Consider adding one versatile utensil or serving piece to complete the set.' }],
+                top_suggestion: 'Add a best-selling utensil set to round out your cart.'
+            };
+        }
+        return res.json(analysis);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/aesthetic-match', async (req, res) => {
+    try {
+        const { materials, finish_keywords, mood_keywords, categories, desired_items, budget, device_id } = req.body || {};
+
+        const mats = Array.isArray(materials) ? materials.filter(Boolean).slice(0, 10) : [];
+        const finishes = Array.isArray(finish_keywords) ? finish_keywords.filter(Boolean).slice(0, 10) : [];
+        const moods = Array.isArray(mood_keywords) ? mood_keywords.filter(Boolean).slice(0, 10) : [];
+        const cats = Array.isArray(categories) ? categories.filter(Boolean).slice(0, 10) : [];
+
+        const desired = Array.isArray(desired_items) ? desired_items.join(' ') : (desired_items || 'cutlery flatware dinnerware');
+        const queryParts = [...mats, ...finishes, ...moods].map(x => String(x).trim()).filter(Boolean);
+        const baseQueries = [
+            `${queryParts.slice(0, 4).join(' ')} ${desired}`.trim(),
+            `${queryParts.slice(0, 4).join(' ')} serveware`.trim(),
+            `${queryParts.slice(0, 4).join(' ')} glassware`.trim()
+        ].filter(q => q.length > 2);
+
+        let picked = [];
+        for (const q of baseQueries.slice(0, 3)) {
+            const hits = await pipelineSearch(q, device_id, 12);
+            picked.push(...(hits || []));
+        }
+
+        if (picked.length < 12) {
+            let catQuery = supabase.from('products').select('*').order('stock', { ascending: false }).limit(60);
+            if (cats.length) catQuery = catQuery.in('category', cats);
+            const tagTokens = [...mats, ...finishes, ...moods].map(x => String(x).trim().toLowerCase()).filter(Boolean).slice(0, 20);
+            if (tagTokens.length) catQuery = catQuery.overlaps('tags', tagTokens);
+            const { data: more } = await catQuery;
+            picked.push(...(more || []).map(fixImageUrl));
+        }
+
+        const seen = new Set();
+        let unique = [];
+        for (const p of picked) {
+            if (!p?.id || seen.has(p.id)) continue;
+            seen.add(p.id);
+            unique.push(p);
+        }
+
+        const b = budget != null ? Number(budget) : null;
+        if (b && Number.isFinite(b) && b > 0) unique = unique.filter(p => Number(p.price || 0) <= b * 1.25);
+
+        unique = unique.slice(0, 24);
+
+        return res.json({
+            profile: {
+                style_label: 'aesthetic_match',
+                materials: mats,
+                finish_keywords: finishes,
+                mood_keywords: moods,
+                categories: cats
+            },
+            suggestions: unique,
+            suggested_next_searches: baseQueries.slice(0, 3)
+        });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/gift-message', async (req, res) => {
+    try {
+        const { contributor_name, recipient_name, event_type, product_name, amount } = req.body || {};
+        const prompt = `
+Write a warm gift message for a registry contribution.
+From: ${contributor_name}
+To: ${recipient_name}
+Event: ${event_type}
+Gift: ${product_name} (contributed $${amount})
+Write 3 options: heartfelt, funny, elegant. Under 40 words each.
+Return ONLY valid JSON: {"messages":[{"tone":"heartfelt","text":"..."},{"tone":"funny","text":"..."},{"tone":"elegant","text":"..."}]}
+`;
+        let result = await askGeminiJSON(prompt);
+        if (!result || !Array.isArray(result.messages)) {
+            result = {
+                messages: [
+                    { tone: 'heartfelt', text: `So happy for you — can’t wait to see the joy this brings to your home.` },
+                    { tone: 'funny', text: `May this help you cook, host, and impress… or at least order takeout in style.` },
+                    { tone: 'elegant', text: `Wishing you a lifetime of warmth, celebration, and beautiful moments at home.` }
+                ]
+            };
+        }
+        return res.json(result);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/thank-you-note', async (req, res) => {
+    try {
+        const { registry_owner_name, contributor_name, product_name, event_type } = req.body || {};
+        const prompt = `
+Write a thank-you note for receiving a registry gift.
+From: ${registry_owner_name}
+To: ${contributor_name}
+Gift: ${product_name}
+Occasion: ${event_type}
+Return ONLY valid JSON: {"notes":[{"style":"casual","text":"..."},{"style":"formal","text":"..."}]}
+`;
+        let result = await askGeminiJSON(prompt);
+        if (!result || !Array.isArray(result.notes)) {
+            result = {
+                notes: [
+                    { style: 'casual', text: `Thank you so much for the ${product_name}! We’re so excited to use it — it means a lot that you celebrated with us.` },
+                    { style: 'formal', text: `Thank you for your thoughtful gift of the ${product_name}. We truly appreciate your kindness and support as we celebrate our ${event_type}.` }
+                ]
+            };
+        }
+        return res.json(result);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/product-story', async (req, res) => {
+    try {
+        const { product_id } = req.body || {};
+        if (!product_id) return res.status(400).json({ error: 'product_id required' });
+        const { data: product, error } = await supabase.from('products').select('*').eq('id', product_id).single();
+        if (error) throw error;
+        fixImageUrl(product);
+        const prompt = `
+Write a vivid, aspirational 2-sentence story for this product:
+${JSON.stringify({ name: product.name, category: product.category, description: product.description })}
+Return ONLY valid JSON: {"story":"...","mood":"warm","occasion_tags":["..."]}
+`;
+        let result = await askGeminiJSON(prompt);
+        if (!result || !result.story) {
+            result = {
+                story: `Imagine an easy Sunday where ${product.name} turns a simple meal into a moment worth sharing. It’s the kind of piece that quietly becomes part of your best memories at home.`,
+                mood: 'warm',
+                occasion_tags: ['Everyday cooking', 'Entertaining']
+            };
+        }
+        return res.json({ product, ...result });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/smart-search', async (req, res) => {
+    try {
+        const { query, device_id } = req.body || {};
+        if (!query) return res.status(400).json({ error: 'query required' });
+        const prompt = `
+A customer searched for: "${query}" in a premium home goods store.
+Return ONLY valid JSON:
+{"intent":"...","expanded_queries":["..."],"categories":["..."],"mood":"...","budget_signal":"...","tags":["..."]}
+`;
+        let intentAnalysis = await askGeminiJSON(prompt);
+        if (!intentAnalysis || !Array.isArray(intentAnalysis.expanded_queries)) {
+            intentAnalysis = { intent: `searching for ${query}`, expanded_queries: [query], categories: [], mood: 'neutral', budget_signal: 'unknown', tags: [] };
+        }
+        const bestQuery = intentAnalysis.expanded_queries[0] || query;
+        const products = await pipelineSearch(bestQuery, device_id, 20);
+        if (device_id) {
+            await supabase.from('recent_searches').insert([{ query, device_id }]);
+        }
+        return res.json({ intent_analysis: intentAnalysis, products });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/price-insight', async (req, res) => {
+    try {
+        const { product_id } = req.body || {};
+        if (!product_id) return res.status(400).json({ error: 'product_id required' });
+        const { data: product, error } = await supabase.from('products').select('*').eq('id', product_id).single();
+        if (error) throw error;
+        fixImageUrl(product);
+
+        const { data: similar, error: sErr } = await supabase
+            .from('products')
+            .select('id, name, price, category')
+            .eq('category', product.category)
+            .limit(10);
+        if (sErr) throw sErr;
+
+        const prices = (similar || []).map(p => Number(p.price || 0));
+        const min = prices.length ? Math.min(...prices) : Number(product.price || 0);
+        const max = prices.length ? Math.max(...prices) : Number(product.price || 0);
+        const avg = prices.length ? Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100 : Number(product.price || 0);
+
+        const prompt = `
+You are a pricing expert.
+Product: ${product.name} at $${product.price}
+Similar range: $${min}-$${max}, avg $${avg}.
+Return ONLY valid JSON: {"verdict":"...","score":82,"percentile":"...","one_liner":"...","compared_to_avg":"...","buy_now_reason":"..."}
+`;
+        let result = await askGeminiJSON(prompt);
+        if (!result || !result.verdict) {
+            const delta = Number(product.price || 0) - avg;
+            result = {
+                verdict: delta <= 0 ? 'Good value' : 'Premium pick',
+                score: delta <= 0 ? 78 : 70,
+                percentile: delta <= 0 ? 'priced at or below average' : 'above average',
+                one_liner: `A solid ${product.category} choice for the right kitchen.`,
+                compared_to_avg: `${Math.round(delta * 100) / 100} vs avg`,
+                buy_now_reason: 'Great fit if you value quality and design.'
+            };
+        }
+        return res.json({ product, similar, ...result });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
     }
 });
 
