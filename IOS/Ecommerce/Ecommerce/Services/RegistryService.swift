@@ -61,32 +61,60 @@ class RegistryService {
     
     func fetchUserRegistries(userId: String) async throws -> [Registry] {
         guard let url = URL(string: "\(baseURL)/user/\(userId)") else { throw URLError(.badURL) }
+        print("🌐 RegistryService: GET \(url.absoluteString)")
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        print("📡 RegistryService: fetchUserRegistries statusCode=\(httpResponse.statusCode)")
         guard httpResponse.statusCode == 200 else {
             let apiErr = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            print("❌ RegistryService: fetchUserRegistries error: \(apiErr?.error ?? "Unknown")")
             throw NSError(domain: "RegistryService", code: httpResponse.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: apiErr?.error ?? "Failed to load registries (\(httpResponse.statusCode))"])
         }
-        return try JSONDecoder().decode([Registry].self, from: data)
+        
+        do {
+            let registries = try JSONDecoder().decode([Registry].self, from: data)
+            print("✅ RegistryService: Decoded \(registries.count) registries successfully")
+            return registries
+        } catch {
+            print("❌ RegistryService: Error decoding registries: \(error)")
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("❌ RegistryService: Raw JSON response: \(jsonString)")
+            }
+            throw error
+        }
     }
     
     func fetchRegistryDashboard(registryId: String) async throws -> RegistryDashboardResponse {
         guard let url = URL(string: "\(baseURL)/\(registryId)/dashboard") else { throw URLError(.badURL) }
+        print("🌐 RegistryService: GET \(url.absoluteString)")
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        print("📡 RegistryService: fetchRegistryDashboard statusCode=\(httpResponse.statusCode)")
         guard httpResponse.statusCode == 200 else {
             let apiErr = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            print("❌ RegistryService: fetchRegistryDashboard error: \(apiErr?.error ?? "Unknown")")
             throw NSError(domain: "RegistryService", code: httpResponse.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: apiErr?.error ?? "Failed to load dashboard (\(httpResponse.statusCode))"])
         }
-        return try JSONDecoder().decode(RegistryDashboardResponse.self, from: data)
+        
+        do {
+            let dashboard = try JSONDecoder().decode(RegistryDashboardResponse.self, from: data)
+            print("✅ RegistryService: Decoded dashboard successfully")
+            return dashboard
+        } catch {
+            print("❌ RegistryService: Error decoding dashboard: \(error)")
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("❌ RegistryService: Raw JSON response: \(jsonString)")
+            }
+            throw error
+        }
     }
     
     func createRegistry(dto: RegistryCreationDTO) async throws -> Registry {

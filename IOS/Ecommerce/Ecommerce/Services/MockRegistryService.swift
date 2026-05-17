@@ -60,12 +60,15 @@ class MockRegistryService: ObservableObject {
     @MainActor
     func fetchRegistriesFromBackend() async throws {
         guard let currentUserId = AuthSession.shared.currentUser?.id else {
+            print("❌ MockRegistryService.fetchRegistriesFromBackend: No current user ID, returning early.")
             self.registries = []
             self.registryItems = [:]
             return
         }
         
+        print("🔍 MockRegistryService.fetchRegistriesFromBackend: Fetching for user \(currentUserId)")
         let loaded = try await RegistryService.shared.fetchUserRegistries(userId: currentUserId)
+        print("✅ MockRegistryService.fetchRegistriesFromBackend: Loaded \(loaded.count) registries")
         var extendedList: [MockRegistryExtended] = []
         
         for reg in loaded {
