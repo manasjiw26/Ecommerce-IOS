@@ -54,7 +54,7 @@ final class AddressBookViewModel: ObservableObject {
         syncSelectedAddressToBackend()
     }
 
-    func select(_ id: String) {
+    func select(_ id: String?) {
         selectedAddressId = id
         persist()
         syncSelectedAddressToBackend()

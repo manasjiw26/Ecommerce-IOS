@@ -14,6 +14,7 @@ struct BagView: View {
     @State private var showSaved         = false
     @State private var showCheckout      = false
     @State private var showAddressSheet  = false
+    @State private var editingAddress: Address? = nil
     @State private var undo: UndoState?  = nil
     @State private var showExpressAlert  = false
     @State private var showOutOfStockAlert = false
@@ -70,24 +71,13 @@ struct BagView: View {
                 Button {
                     showSaved = true
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bookmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.primary)
-                        
-                        if bagVM.savedCount > 0 {
-                            Text("\(bagVM.savedCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(width: 16, height: 16)
-                                .background(Color.black)
-                                .clipShape(Circle())
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(30)
+                    Image(systemName: "bookmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(30)
                 }
                 .buttonStyle(.plain)
             }
@@ -421,6 +411,18 @@ struct BagView: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
+                                        
+                                        // Edit Address Pencil
+                                        Button {
+                                            editingAddress = addr
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                                .foregroundColor(.secondary)
+                                                .font(.subheadline)
+                                                .padding(6)
+                                        }
+                                        .buttonStyle(.plain)
+                                        
                                         if addressBook.selectedAddressId == addr.id {
                                             Image(systemName: "checkmark")
                                                 .foregroundColor(.black)
@@ -443,6 +445,15 @@ struct BagView: View {
                 }
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            editingAddress = Address(label: "Home", fullName: "", phone: "", line1: "", line2: "", city: "", state: "", zip: "")
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundColor(.black)
+                                .fontWeight(.semibold)
+                        }
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { showAddressSheet = false }
                     }
@@ -450,6 +461,18 @@ struct BagView: View {
                 .background(Color(UIColor.systemBackground))
             }
             .presentationDetents([.medium])
+        }
+        .sheet(item: $editingAddress) { addr in
+            AddressEditSheet(
+                address: addr,
+                onSave: { saved in
+                    addressBook.upsert(saved)
+                    addressBook.select(saved.id)
+                    editingAddress = nil
+                },
+                onCancel: { editingAddress = nil }
+            )
+            .presentationDetents([.large])
         }
     }
 
@@ -828,43 +851,50 @@ private struct BagItemRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                // Thumbnail
-                if let url = item.product.imageUrl {
-                    CachedImageView(urlString: url) { img in
-                        img.resizable().scaledToFill()
-                    } placeholder: {
-                        Color(.systemGray5)
-                    }
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        Group {
-                            if isOutOfStock {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.black.opacity(0.45))
-                                    .overlay(
-                                        Text("OUT\nOF\nSTOCK")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(.white)
-                                            .multilineTextAlignment(.center)
-                                    )
+                NavigationLink(destination: ProductDetailView(product: item.product)) {
+                    HStack(spacing: 12) {
+                        // Thumbnail
+                        if let url = item.product.imageUrl {
+                            CachedImageView(urlString: url) { img in
+                                img.resizable().scaledToFill()
+                            } placeholder: {
+                                Color(.systemGray5)
                             }
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                Group {
+                                    if isOutOfStock {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.black.opacity(0.45))
+                                            .overlay(
+                                                Text("OUT\nOF\nSTOCK")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundColor(.white)
+                                                    .multilineTextAlignment(.center)
+                                            )
+                                    }
+                                }
+                            )
                         }
-                    )
-                }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.product.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.product.name)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .lineLimit(2)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
 
-                    Text("$\(String(format: "%.2f", item.product.price))")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
+                            Text("$\(String(format: "%.2f", item.product.price))")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
 
                 Spacer()
 

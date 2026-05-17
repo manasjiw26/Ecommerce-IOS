@@ -27,7 +27,7 @@ struct ContentView: View {
                 }
                 .tabItem {
                     Image(systemName: "bag.fill")
-                    Text("Bag")
+                    Text("Cart")
                 }
                 .badge(cartManager.items.count)
                 .tag(1)

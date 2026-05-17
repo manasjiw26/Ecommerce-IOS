@@ -72,10 +72,11 @@ struct CheckoutSheetView: View {
     private func fmt(_ v: Double) -> String { "$\(String(format: "%.2f", v))" }
 
     private var addressValid: Bool {
-        !address1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !zip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if addressBook.selectedAddressId != nil { return true }
+        return !address1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               !city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               !zip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -203,8 +204,14 @@ struct CheckoutSheetView: View {
                     }
                     ForEach(addressBook.addresses) { addr in
                         Button {
-                            addressBook.select(addr.id)
-                            applySelectedAddress()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                if addressBook.selectedAddressId == addr.id {
+                                    addressBook.select(nil)
+                                } else {
+                                    addressBook.select(addr.id)
+                                    applySelectedAddress()
+                                }
+                            }
                         } label: {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: addressBook.selectedAddressId == addr.id ? "checkmark.circle.fill" : "circle")
@@ -230,43 +237,49 @@ struct CheckoutSheetView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
-            // Guest / manual fields
-            VStack(alignment: .leading, spacing: 4) {
-                if AuthSession.shared.currentUser == nil {
-                    HStack {
-                        Spacer()
-                        Button("Sign in to autofill") {
-                            NotificationCenter.default.post(name: .requireAuth, object: nil)
+            if addressBook.selectedAddressId == nil {
+                // Guest / manual fields
+                VStack(alignment: .leading, spacing: 4) {
+                    if AuthSession.shared.currentUser == nil {
+                        HStack {
+                            Spacer()
+                            Button("Sign in to autofill") {
+                                NotificationCenter.default.post(name: .requireAuth, object: nil)
+                            }
+                            .font(.footnote)
+                            .foregroundColor(.primary)
                         }
-                        .font(.footnote)
-                        .foregroundColor(.primary)
+                        .padding(.bottom, 4)
                     }
-                    .padding(.bottom, 4)
-                }
 
-                formCard {
-                    Group {
-                        LabeledTextField("Full Name", text: $fullName, contentType: .name)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("Phone", text: $phone, keyboardType: .phonePad)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("Email", text: $email, contentType: .emailAddress, keyboardType: .emailAddress)
+                    formCard {
+                        Group {
+                            LabeledTextField("Full Name", text: $fullName, contentType: .name)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("Phone", text: $phone, keyboardType: .phonePad)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("Email", text: $email, contentType: .emailAddress, keyboardType: .emailAddress)
+                        }
                     }
-                }
 
-                formCard {
-                    Group {
-                        LabeledTextField("Address Line 1", text: $address1, contentType: .streetAddressLine1)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("Address Line 2 (optional)", text: $address2)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("City", text: $city, contentType: .addressCity)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("State", text: $state, contentType: .addressState)
-                        Divider().padding(.leading, 14)
-                        LabeledTextField("PIN", text: $zip, keyboardType: .numberPad)
+                    formCard {
+                        Group {
+                            LabeledTextField("Address Line 1", text: $address1, contentType: .streetAddressLine1)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("Address Line 2 (optional)", text: $address2)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("City", text: $city, contentType: .addressCity)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("State", text: $state, contentType: .addressState)
+                            Divider().padding(.leading, 14)
+                            LabeledTextField("PIN", text: $zip, keyboardType: .numberPad)
+                        }
                     }
                 }
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity
+                ))
             }
 
             // Delivery speed (shown always, consistent with spec)
@@ -679,44 +692,6 @@ private struct RazorpayPaymentCaptureView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") { dismiss(); onCancel() }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Address Edit Sheet
-
-private struct AddressEditSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State var address: Address
-    let onSave: (Address) -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Label") { TextField("Home / Work", text: $address.label) }
-                Section("Contact") {
-                    TextField("Full name", text: $address.fullName)
-                    TextField("Phone", text: $address.phone).keyboardType(.phonePad)
-                }
-                Section("Address") {
-                    TextField("Line 1", text: $address.line1)
-                    TextField("Line 2", text: $address.line2)
-                    TextField("City", text: $address.city)
-                    TextField("State", text: $address.state)
-                    TextField("ZIP", text: $address.zip).keyboardType(.numberPad)
-                }
-            }
-            .navigationTitle("Address")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss(); onCancel() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") { dismiss(); onSave(address) }.fontWeight(.semibold)
                 }
             }
         }
