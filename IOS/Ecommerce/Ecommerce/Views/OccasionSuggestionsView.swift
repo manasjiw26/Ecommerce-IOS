@@ -100,11 +100,7 @@ struct OccasionSuggestionsView: View {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(displayProducts) { product in
                                 NavigationLink(destination: ProductDetailView(product: product)) {
-                                    ProductCardView(
-                                        product: product,
-                                        width: productCardWidth,
-                                        height: productCardHeight
-                                    )
+                                    ProductCardView(product: product)
                                 }
                                 .buttonStyle(PlainButtonStyle())
                             }
