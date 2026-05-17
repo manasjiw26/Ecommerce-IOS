@@ -64,6 +64,11 @@ router.post('/', async (req, res) => {
         return res.status(500).json({ error: orderError.message });
     }
 
+    // 4. Clear user's backend cart (best-effort) so cart UI reflects checkout completion
+    try {
+        await supabase.from('cart_items').delete().eq('user_id', user_id);
+    } catch (_) {}
+
     res.json({ message: 'Order placed successfully', order: orderData });
 });
 
