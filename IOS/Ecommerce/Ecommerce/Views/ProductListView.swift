@@ -17,6 +17,8 @@ struct ProductListView: View {
     @FocusState private var searchFocused: Bool
     @StateObject private var visualVM = VisualSearchViewModel()
     @State private var showSourceTypeDialog = false
+    @State private var cachedPersonalizedProducts: [Product] = []
+    @State private var personalizedRefreshToken = UUID()
 
     let columns = [GridItem(.flexible()), GridItem(.flexible())]
 
@@ -32,7 +34,7 @@ struct ProductListView: View {
         if searchViewModel.hasSearched {
             return searchViewModel.searchResults
         }
-        var result = viewModel.products
+        var result = cachedPersonalizedProducts.isEmpty ? viewModel.products : cachedPersonalizedProducts
         if let category = searchViewModel.selectedCategory {
             result = result.filter { $0.category == category }
         }
@@ -131,7 +133,9 @@ struct ProductListView: View {
             }
             .task {
                 if viewModel.products.isEmpty {
-                    await viewModel.fetchProducts()
+                    await refreshPersonalizedHome()
+                } else if cachedPersonalizedProducts.isEmpty {
+                    cachedPersonalizedProducts = recoEngine.personalize(viewModel.products)
                 }
             }
         }
@@ -500,36 +504,50 @@ struct ProductListView: View {
                     VStack(alignment: .leading, spacing: 0) {
 
                         // MARK: — Search Pill (tapping activates inline search)
-                        Button {
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                                isSearchActive = true
+                        HStack(spacing: 0) {
+                            // Text area — tap to open text search
+                            Button {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                                    isSearchActive = true
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    searchFocused = true
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundColor(Color(.placeholderText))
+
+                                    Text("Search")
+                                        .font(.system(size: 17))
+                                        .foregroundColor(Color(.placeholderText))
+
+                                    Spacer()
+                                }
+                                .padding(.leading, 14)
+                                .padding(.trailing, 6)
+                                .padding(.vertical, 11)
+                                .contentShape(Rectangle())
                             }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                searchFocused = true
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(Color(.placeholderText))
+                            .buttonStyle(PlainButtonStyle())
 
-                                Text("Search")
-                                    .font(.system(size: 17))
-                                    .foregroundColor(Color(.placeholderText))
-
-                                Spacer()
-
+                            // Camera — tap to open visual search
+                            Button {
+                                visualVM.showSourceDialog = true
+                            } label: {
                                 Image(systemName: "camera")
                                     .font(.system(size: 15))
                                     .foregroundColor(Color(.placeholderText))
+                                    .frame(width: 40, height: 44)
+                                    .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 11)
-                            .background(Color(UIColor.systemBackground))
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
+                            .buttonStyle(ScaleButtonStyle())
+                            .padding(.trailing, 6)
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .background(Color(UIColor.systemBackground))
+                        .clipShape(Capsule())
+                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -575,13 +593,22 @@ struct ProductListView: View {
                     }
                 }
                 .refreshable {
-                    await viewModel.fetchProducts()
-                    await recoEngine.fetchRecommendations()
+                    await refreshPersonalizedHome()
                 }
                 .transition(.opacity.animation(.easeIn(duration: 0.3)))
             }
         }
         .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading)
+    }
+
+    @MainActor
+    private func refreshPersonalizedHome() async {
+        await viewModel.fetchProducts()
+        await recoEngine.fetchRecommendations()
+        cachedPersonalizedProducts = recoEngine.personalize(viewModel.products)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+            personalizedRefreshToken = UUID()
+        }
     }
 }
 
@@ -689,56 +716,78 @@ private struct RecentlyViewedCard: View {
 // MARK: - Product Grid Card
 struct ProductCardView: View {
     let product: Product
+    @State private var isSaved = false
+
+    private var cardWidth: CGFloat {
+        let screen = UIScreen.main.bounds.width
+        let available = screen - (14 * 2) - 14
+        return floor(available / 2)
+    }
+    private var cardHeight: CGFloat { cardWidth + 86 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ZStack {
-                if let imageUrlString = product.imageUrl {
-                    CachedImageView(urlString: imageUrlString) { image in
-                        GeometryReader { geo in
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: geo.size.width, height: geo.size.width)
-                                .clipped()
-                        }
-                        .aspectRatio(1, contentMode: .fit)
-                    } placeholder: {
-                        Rectangle()
-                            .fill(Color(.systemGray5))
-                            .aspectRatio(1, contentMode: .fit)
-                            .shimmer()
-                    }
-                    .id(imageUrlString)
-                } else {
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay(Image(systemName: "photo").foregroundColor(.gray))
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 0))
-
+            productImage
+            
             VStack(alignment: .leading, spacing: 4) {
-                Text(product.name)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-
+                HStack(alignment: .top, spacing: 4) {
+                    Text(product.name)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    
+                    Spacer(minLength: 4)
+                    
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(isSaved ? .primary : .secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            let impact = UIImpactFeedbackGenerator(style: .light)
+                            impact.impactOccurred()
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isSaved.toggle()
+                            }
+                        }
+                }
+                
                 Text("$\(String(format: "%.2f", product.price))")
                     .font(.caption)
                     .foregroundColor(.secondary)
-
+                
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(height: 80, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 82, alignment: .topLeading)
         }
+        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
         .background(Color(UIColor.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.07), radius: 8, x: 0, y: 2)
+    }
+
+    private var productImage: some View {
+        ZStack {
+            Color(.systemGray6)
+            if let imageUrlString = product.imageUrl, !imageUrlString.isEmpty {
+                CachedImageView(urlString: imageUrlString) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Rectangle().fill(Color(.systemGray5)).shimmer()
+                }
+                .id(imageUrlString)
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: 28))
+                    .foregroundColor(.gray)
+            }
+        }
+        .frame(width: cardWidth, height: cardWidth)
+        .clipped()
     }
 }
 

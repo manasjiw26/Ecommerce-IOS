@@ -6,9 +6,22 @@ struct OccasionSuggestionsView: View {
     @EnvironmentObject var cartManager: CartManager
     @StateObject var recommendationEngine = RecommendationEngine.shared
     
+    private let gridHorizontalPadding: CGFloat = 12
+    private let gridColumnSpacing: CGFloat = 16
+    
+    private var productCardWidth: CGFloat {
+        let width = UIScreen.main.bounds.width
+        let availableWidth = width - (gridHorizontalPadding * 2) - gridColumnSpacing
+        return floor(availableWidth / 2)
+    }
+
+    private var productCardHeight: CGFloat {
+        productCardWidth + 86
+    }
+    
     let columns = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
     ]
     
     // Instead of local filtering, we now use the AI-driven search results from our backend
@@ -87,12 +100,16 @@ struct OccasionSuggestionsView: View {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(displayProducts) { product in
                                 NavigationLink(destination: ProductDetailView(product: product)) {
-                                    ProductCardView(product: product)
+                                    ProductCardView(
+                                        product: product,
+                                        width: productCardWidth,
+                                        height: productCardHeight
+                                    )
                                 }
                                 .buttonStyle(PlainButtonStyle())
                             }
                         }
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, gridHorizontalPadding)
                         .padding(.bottom, 24)
                     }
                 }

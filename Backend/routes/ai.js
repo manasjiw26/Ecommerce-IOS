@@ -16,6 +16,7 @@ const autocompleteService = require('../services/search/autocompleteService');
 const { getEmbedding } = require('../services/search/semanticSearchService');
 const analyticsService = require('../services/search/analyticsService');
 const trendingService = require('../services/search/trendingService');
+const suggestedProductsService = require('../services/search/suggestedProductsService');
 
 // ── Gemini AI (for recommendations — unchanged) ──────────────────────────────
 const ai = new GoogleGenAI({
@@ -809,6 +810,22 @@ router.post('/visual-search/feedback', async (req, res) => {
         }]);
         res.json({ success: true });
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST /ai/suggested-products
+// Body: { product_id, device_id }
+router.post('/suggested-products', async (req, res) => {
+    const { product_id, device_id } = req.body;
+    if (!product_id) {
+        return res.status(400).json({ error: 'product_id required' });
+    }
+    try {
+        const results = await suggestedProductsService.getSuggestions(product_id, device_id);
+        res.json(results);
+    } catch (error) {
+        console.error('Failed to fetch suggested products:', error.message);
         res.status(500).json({ error: error.message });
     }
 });

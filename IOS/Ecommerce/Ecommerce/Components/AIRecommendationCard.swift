@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AIRecommendationCard: View {
     let product: Product
+    var showAIPickBadge: Bool = true
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,19 +28,21 @@ struct AIRecommendationCard: View {
                         .overlay(Image(systemName: "photo").foregroundColor(.gray))
                 }
                 
-                // AI Badge
-                HStack(spacing: 3) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("AI Pick")
-                        .font(.system(size: 10, weight: .semibold))
+                if showAIPickBadge {
+                    // AI Badge
+                    HStack(spacing: 3) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("AI Pick")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(Capsule())
+                    .padding(8)
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.75))
-                .clipShape(Capsule())
-                .padding(8)
             }
             .frame(width: 150, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

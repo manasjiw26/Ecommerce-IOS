@@ -75,4 +75,61 @@ class APIService {
             throw URLError(.badServerResponse)
         }
     }
+    
+    // MARK: - Reviews Endpoints
+    func fetchReviews(productId: Int) async throws -> [ProductReview] {
+        guard let url = URL(string: "\(APIService.baseURL)/products/\(productId)/reviews") else {
+            throw URLError(.badURL)
+        }
+        
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        return try JSONDecoder().decode([ProductReview].self, from: data)
+    }
+    
+    func submitReview(productId: Int, userId: String, rating: Int, body: String) async throws -> ProductReview {
+        guard let url = URL(string: "\(APIService.baseURL)/reviews") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "product_id": productId,
+            "user_id": userId,
+            "rating": rating,
+            "body": body
+        ])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if httpResponse.statusCode != 200 && httpResponse.statusCode != 201 {
+            let errorObj = try? JSONDecoder().decode(AuthError.self, from: data)
+            let errorMessage = errorObj?.error ?? "Failed to submit review."
+            throw NSError(domain: "APIService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        }
+        
+        return try JSONDecoder().decode(ProductReview.self, from: data)
+    }
+    
+    func deleteReview(reviewId: String) async throws {
+        guard let url = URL(string: "\(APIService.baseURL)/reviews/\(reviewId)") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+    }
 }

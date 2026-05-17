@@ -200,7 +200,27 @@ async function execute(rawQuery, deviceId, options = {}) {
     let filtered = personalized;
     
     if (category) {
-        filtered = filtered.filter(p => p.category === category);
+        const catLower = String(category).toLowerCase().trim();
+        filtered = filtered.filter(p => p.category && String(p.category).toLowerCase().trim() === catLower);
+    }
+    
+    // Category Fallback: If post-retrieval category filtering wiped out all results,
+    // fetch products directly from that category as a fallback to ensure we return relevant results.
+    if (filtered.length === 0 && category) {
+        try {
+            const { supabase } = require('../../supabaseClient');
+            const { data } = await supabase
+                .from('products')
+                .select('*')
+                .eq('category', category)
+                .limit(limit * 2);
+            if (data && data.length > 0) {
+                const rankedFallback = rankingEngine.rank(data, intent, expanded, rankingSignals);
+                filtered = await personalizationEngine.boost(rankedFallback, deviceId);
+            }
+        } catch (e) {
+            console.warn('Category fallback query failed:', e.message);
+        }
     }
     
     if (maxPrice) {
