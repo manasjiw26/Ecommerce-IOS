@@ -42,61 +42,91 @@ struct BagView: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                // Hero header (Registry-style)
-                Section {
-                    BagHeroHeader(imageUrl: heroImageUrl)
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                }
-
-                // Primary actions row
-                Section {
-                    HStack(spacing: 14) {
-                        Button {
-                            showSaved = true
-                        } label: {
-                            Label("Saved", systemImage: "bookmark")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.black)
-                        .clipShape(Capsule())
-
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                proxy.scrollTo("bag_addons_anchor", anchor: .top)
-                            }
-                        } label: {
-                            Label("Complete Your Set", systemImage: "sparkles")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.black)
-                        .clipShape(Capsule())
-                    }
-                    .padding(.vertical, 6)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    .listRowSeparator(.hidden)
-                }
-
                 if cartManager.items.isEmpty {
                     Section {
-                        VStack(spacing: 10) {
-                            Image(systemName: "bag")
-                                .font(.title)
-                                .foregroundColor(.secondary)
-                            Text("Your bag is empty")
-                                .font(.headline)
-                            Text("Add items to unlock premium recommendations and bundles.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        BagHeroHeader(
+                            imageUrl: heroImageUrl,
+                            eyebrow: "THE SHOPPING BAG",
+                            title: "Start with something you love.",
+                            subtitle: "Add a few essentials and we’ll build bundles and smart add-ons around your picks.",
+                            height: 300
+                        )
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
                     }
-                    .listRowSeparator(.hidden)
+
+                    Section {
+                        VStack(spacing: 14) {
+                            Button {
+                                NotificationCenter.default.post(name: .goToShopTab, object: nil)
+                            } label: {
+                                Label("Shop Bestsellers", systemImage: "bag.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.black)
+                            .clipShape(Capsule())
+                            .controlSize(.large)
+
+                            Button {
+                                showSaved = true
+                            } label: {
+                                Label("View Saved Items", systemImage: "bookmark")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.primary)
+                            .clipShape(Capsule())
+                            .controlSize(.large)
+                        }
+                        .padding(.vertical, 8)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowSeparator(.hidden)
+                    }
                 } else {
+                    // Hero header (Registry-style)
+                    Section {
+                        BagHeroHeader(
+                            imageUrl: heroImageUrl,
+                            eyebrow: "THE SHOPPING BAG",
+                            title: "Complete your kitchen, beautifully.",
+                            subtitle: nil,
+                            height: 260
+                        )
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                    }
+
+                    // Primary actions row
+                    Section {
+                        HStack(spacing: 14) {
+                            Button {
+                                showSaved = true
+                            } label: {
+                                Label("Saved", systemImage: "bookmark")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.black)
+                            .clipShape(Capsule())
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    proxy.scrollTo("bag_addons_anchor", anchor: .top)
+                                }
+                            } label: {
+                                Label("Complete Your Set", systemImage: "sparkles")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.black)
+                            .clipShape(Capsule())
+                        }
+                        .padding(.vertical, 6)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowSeparator(.hidden)
+                    }
+
                     Section {
                         BagIntelligenceView(
                             coach: bagVM.coach,
@@ -349,6 +379,10 @@ private struct BagFooter: View {
 
 private struct BagHeroHeader: View {
     let imageUrl: String?
+    let eyebrow: String
+    let title: String
+    let subtitle: String?
+    let height: CGFloat
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -358,18 +392,18 @@ private struct BagHeroHeader: View {
                 } placeholder: {
                     Color(.systemGray5)
                 }
-                .frame(height: 260)
+                .frame(height: height)
                 .clipped()
             } else {
                 Color(.systemGray5)
-                    .frame(height: 260)
+                    .frame(height: height)
             }
 
             LinearGradient(colors: [Color.black.opacity(0.0), Color.black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
-                .frame(height: 260)
+                .frame(height: height)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("THE SHOPPING BAG")
+                Text(eyebrow)
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(.white.opacity(0.9))
@@ -378,11 +412,18 @@ private struct BagHeroHeader: View {
                     .background(Color.white.opacity(0.18))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                Text("Complete your kitchen, beautifully.")
+                Text(title)
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .foregroundColor(.white)
                     .lineLimit(2)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.92))
+                        .lineLimit(3)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 18)

@@ -7,6 +7,10 @@
 
 import SwiftUI
 
+extension Notification.Name {
+    static let goToShopTab = Notification.Name("goToShopTab")
+}
+
 struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showChat = false
@@ -51,6 +55,9 @@ struct ContentView: View {
                     .tag(3)
             }
             .tint(.primary)
+            .onReceive(NotificationCenter.default.publisher(for: .goToShopTab)) { _ in
+                selectedTab = 0
+            }
             
             // Floating chat button
             VStack {
