@@ -51,6 +51,31 @@ function missingTable(err) {
     return msg.includes('relation') && msg.includes('does not exist');
 }
 
+// ── Aesthetic Color Filtering ─────────────────────────────────────────────────
+const COLOR_FAMILIES = {
+    neutrals: ['white', 'cream', 'beige', 'ivory', 'off-white', 'grey', 'charcoal', 'black'],
+    warm:     ['terracotta', 'rust', 'brown', 'tan', 'caramel', 'gold', 'brass', 'amber', 'peach', 'blush'],
+    cool:     ['navy', 'blue', 'slate', 'teal', 'sage', 'green', 'mint', 'lavender', 'purple'],
+    bold:     ['red', 'orange', 'yellow', 'pink', 'coral', 'lime', 'emerald', 'cobalt']
+};
+
+function getColorFamily(colorName) {
+    for (const [family, colors] of Object.entries(COLOR_FAMILIES)) {
+        if (colors.some(c =>
+            colorName.toLowerCase().includes(c) || c.includes(colorName.toLowerCase())
+        )) {
+            return family;
+        }
+    }
+    return 'neutrals'; // default fallback
+}
+
+function getDetectedFamilies(dominantColors) {
+    const families = new Set((dominantColors || []).map(c => getColorFamily(c)));
+    families.add('neutrals'); // neutrals always allowed alongside any palette
+    return families;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  SEARCH — Delegated to modular pipeline
 // ══════════════════════════════════════════════════════════════════════════════
@@ -351,7 +376,7 @@ function fixImageUrl(product) {
 // POST /ai/visual-search
 // Body: { device_id, vision_labels: [{label, confidence}], top_label, base64_image? }
 router.post('/visual-search', async (req, res) => {
-    const { device_id, vision_labels, top_label, base64_image } = req.body;
+    const { device_id, vision_labels, top_label, base64_image, mode, dominant_colors: dominantColors = [] } = req.body;
     if (!device_id || !Array.isArray(vision_labels) || vision_labels.length === 0) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -361,7 +386,7 @@ router.post('/visual-search', async (req, res) => {
         const top5 = labelStrings.slice(0, 5);
 
         // ── Step 1: Build text query string from Vision labels ────────────────
-        const queryString = vision_labels
+        let queryString = vision_labels
             .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
             .slice(0, 10)
             .map(v => (v.label || v).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').trim())
@@ -390,13 +415,40 @@ router.post('/visual-search', async (req, res) => {
                 return { results: data || [], type: 'image' };
             })(),
 
-            // B) Text hybrid search (fallback when no image)
+            // B) Text hybrid search (fallback when no image or aesthetic mode)
             (async () => {
-                const embedding = await getLocalEmbedding(queryString);
+                let hybridQuery = queryString;
+                if (mode === 'aesthetic' && base64_image) {
+                    try {
+                        const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+                        const response = await ai.models.generateContent({
+                            model: GEMINI_MODEL,
+                            contents: [{
+                                role: 'user',
+                                parts: [
+                                    { inlineData: { data: base64_image, mimeType: 'image/jpeg' } },
+                                    { text: 'Analyze this scene and extract its dominant colors and overall aesthetic. First, list the 1 or 2 most dominant colors (e.g. red, white, blue). Then list the style (e.g. rustic, modern). Return ONLY a comma-separated list of keywords. Do not describe objects.' }
+                                ]
+                            }],
+                            generationConfig: { temperature: 0.2 }
+                        });
+                        const aestheticKeywords = response.text().trim();
+                        if (aestheticKeywords) {
+                            hybridQuery = aestheticKeywords.replace(/,/g, ' ');
+                            // Add some keywords to labelStrings for tag overlap
+                            const newTags = hybridQuery.split(' ').filter(w => w.length > 3);
+                            labelStrings.push(...newTags);
+                        }
+                    } catch (aiErr) {
+                        console.error('Gemini aesthetic extraction failed:', aiErr.message);
+                    }
+                }
+
+                const embedding = await getLocalEmbedding(hybridQuery);
                 const { data, error } = await supabase.rpc('hybrid_search', {
-                    query_text: queryString,
+                    query_text: hybridQuery,
                     query_embedding: embedding,
-                    match_count: 20
+                    match_count: 30
                 });
                 if (error) throw error;
                 return { results: data || [], type: 'text' };
@@ -477,6 +529,32 @@ router.post('/visual-search', async (req, res) => {
             }
         }
 
+        // ── Step 3b: Hard Color Exclusion (Aesthetic mode only) ──────────────
+        // Remove products whose entire color palette is outside the detected
+        // color families BEFORE any scoring happens. Products with no color
+        // information are allowed through but will score low.
+        let mergedFiltered = merged;
+        if (mode === 'aesthetic' && dominantColors.length > 0) {
+            const detectedFamiliesFilter = getDetectedFamilies(dominantColors);
+            const allColorNamesFlat = Object.values(COLOR_FAMILIES).flat();
+            mergedFiltered = merged.filter(product => {
+                const productText = [
+                    ...(product.tags || []),
+                    product.name        || '',
+                    product.description || ''
+                ].join(' ').toLowerCase();
+
+                const productColorHits = allColorNamesFlat.filter(c => productText.includes(c));
+
+                // No color data on product → allow through, will rank low
+                if (productColorHits.length === 0) return true;
+
+                const productFamilies = new Set(productColorHits.map(c => getColorFamily(c)));
+                // Hard exclude only if ALL product color families are outside detected families
+                return [...productFamilies].some(f => detectedFamiliesFilter.has(f));
+            });
+            console.log(`[aesthetic] color gate: ${merged.length} → ${mergedFiltered.length} products`);
+        }
 
         // ── Step 4: Score ─────────────────────────────────────────────────────
         // Top 3 Vision labels (highest confidence) — these define what the image IS
@@ -486,66 +564,177 @@ router.post('/visual-search', async (req, res) => {
             .map(vl => (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim())
             .filter(Boolean);
 
-        const scored = merged.map(product => {
+        const allColorNamesFlat = Object.values(COLOR_FAMILIES).flat();
+        const detectedFamilies  = getDetectedFamilies(dominantColors);
+
+        const scored = mergedFiltered.map(product => {
             const name        = (product.name || '').toLowerCase();
             const category    = (product.category || '').toLowerCase();
             const tags        = (product.tags || []).map(t => t.toLowerCase());
             const description = (product.description || '').toLowerCase();
             const haystack    = [name, category, tags.join(' '), description].join(' ');
 
-            // ① PRIMARY MATCH — does product contain any top Vision label?
-            //   Tag match > name/category match > description match
-            //   Top label (rank 1) weighs more than rank 2, rank 3
-            let primaryScore = 0;
-            topVisionLabels.forEach((lbl, i) => {
-                const weight = 1 - (i * 0.2); // rank1=1.0, rank2=0.8, rank3=0.6
-                if (tags.some(t => t.includes(lbl) || lbl.includes(t))) {
-                    primaryScore = Math.max(primaryScore, weight);           // strongest
-                } else if (name.includes(lbl) || category.includes(lbl)) {
-                    primaryScore = Math.max(primaryScore, weight * 0.85);    // strong
-                } else if (description.includes(lbl)) {
-                    primaryScore = Math.max(primaryScore, weight * 0.5);     // weak
+            // ── OBJECT MODE scoring (unchanged) ──────────────────────────────
+            if (mode !== 'aesthetic') {
+                // ① PRIMARY MATCH — does product contain any top Vision label?
+                let primaryScore = 0;
+                topVisionLabels.forEach((lbl, i) => {
+                    const weight = 1 - (i * 0.2);
+                    if (tags.some(t => t.includes(lbl) || lbl.includes(t))) {
+                        primaryScore = Math.max(primaryScore, weight);
+                    } else if (name.includes(lbl) || category.includes(lbl)) {
+                        primaryScore = Math.max(primaryScore, weight * 0.85);
+                    } else if (description.includes(lbl)) {
+                        primaryScore = Math.max(primaryScore, weight * 0.5);
+                    }
+                });
+
+                // ② FULL LABEL COVERAGE
+                let labelScore = 0;
+                for (const vl of vision_labels) {
+                    const lbl  = (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim();
+                    const conf = typeof vl.confidence === 'number' ? vl.confidence : 0.5;
+                    if (lbl && haystack.includes(lbl)) labelScore += conf;
                 }
+                const normLabel = Math.min(labelScore / 3, 1);
+
+                // ③ TAG OVERLAP BONUS
+                const tagBonus = tagMatchIds.has(product.id) ? 0.2 : 0;
+
+                const combined = hasImageSearch
+                    ? (product._image_score  * 0.65)
+                      + (normLabel           * 0.15)
+                      + (tagBonus            * 0.10)
+                      + (product._hybrid_score * 0.10)
+                    : (primaryScore          * 0.55)
+                      + (normLabel           * 0.20)
+                      + (product._hybrid_score * 0.15)
+                      + (tagBonus            * 0.10);
+
+                return { ...product, _score: combined };
+            }
+
+            // ── AESTHETIC MODE scoring ────────────────────────────────────────
+            const productColorHits = allColorNamesFlat.filter(c => haystack.includes(c));
+            const productFamilies  = new Set(productColorHits.map(c => getColorFamily(c)));
+
+            // Exact color name match (0–1)
+            const exactMatches = dominantColors.filter(dc => haystack.includes(dc.toLowerCase())).length;
+            const exactColorScore = dominantColors.length > 0
+                ? Math.min(exactMatches / dominantColors.length, 1)
+                : 0;
+
+            // Family-level match (softer signal)
+            const familyMatches = [...productFamilies].filter(f => detectedFamilies.has(f)).length;
+            const familyScore   = productFamilies.size > 0
+                ? Math.min(familyMatches / productFamilies.size, 1)
+                : 0;
+
+            // Combined color score: exact match weighted higher than family
+            const colorScore = (exactColorScore * 0.7) + (familyScore * 0.3);
+
+            // Vibe/style score from hybrid search rank
+            const vibeScore = product._hybrid_score || 0;
+
+            // CLIP visual similarity
+            const clipScore = product._image_score || 0;
+
+            // Tag overlap with aesthetic labels (Gemini-extracted keywords in labelStrings)
+            const tagMatchCount = (product.tags || []).filter(t =>
+                labelStrings.some(l =>
+                    l.includes(t.toLowerCase()) || t.toLowerCase().includes(l)
+                )
+            ).length;
+            const tagScore = labelStrings.length > 0
+                ? Math.min(tagMatchCount / labelStrings.length, 1)
+                : 0;
+
+            // Final score: color is primary gate AND primary ranker
+            const combined =
+                (colorScore * 0.55) +
+                (vibeScore  * 0.20) +
+                (clipScore  * 0.15) +
+                (tagScore   * 0.10);
+
+            // ── Build human-readable aesthetic reasoning ──────────────────
+            let aestheticReason = '';
+            if (mode === 'aesthetic') {
+                const matchedColorNames = dominantColors.filter(dc => haystack.includes(dc.toLowerCase()));
+                const matchedFamilyList = [...productFamilies].filter(f => detectedFamilies.has(f));
+
+                if (matchedColorNames.length > 0) {
+                    // Exact color hit — most specific reason
+                    const colorStr = matchedColorNames.map(c => c.charAt(0).toUpperCase() + c.slice(1)).join(' & ');
+                    if (vibeScore > 0.5 || clipScore > 0.5) {
+                        aestheticReason = `Matches your ${colorStr} palette and complements the overall style of your space.`;
+                    } else {
+                        aestheticReason = `Its ${colorStr} tones blend naturally with your room's color palette.`;
+                    }
+                } else if (matchedFamilyList.length > 0) {
+                    // Family-level match — softer reason
+                    const familyLabel = matchedFamilyList[0];
+                    const familyPhrases = {
+                        neutrals: 'neutral tones that pair with any palette in your space',
+                        warm:     'warm undertones that complement the earthy tones in your room',
+                        cool:     'cool tones that add a calm, balanced contrast to your space',
+                        bold:     'a bold accent that creates intentional contrast in your aesthetic'
+                    };
+                    aestheticReason = `This has ${familyPhrases[familyLabel] || 'tones that work with your palette'}.`;
+                } else if (clipScore > 0.45) {
+                    aestheticReason = 'Visually similar in style and feel to the scene in your photo.';
+                } else {
+                    aestheticReason = 'A curated pick that fits the overall mood of your space.';
+                }
+            }
+
+            return {
+                ...product,
+                _score:              combined,
+                _colorScore:         colorScore,
+                _exactColorMatches:  exactMatches,
+                ai_reasoning:        aestheticReason || undefined
+            };
+        });
+
+        // ── Sort: Aesthetic sorts by exact color match count first, then score
+        if (mode === 'aesthetic') {
+            scored.sort((a, b) => {
+                // Primary: most exact color name matches first
+                if ((b._exactColorMatches || 0) !== (a._exactColorMatches || 0)) {
+                    return (b._exactColorMatches || 0) - (a._exactColorMatches || 0);
+                }
+                // Secondary: combined score
+                return b._score - a._score;
             });
+        } else {
+            // Object mode: sort descending by score; tiebreak by tag match
+            scored.sort((a, b) => {
+                if (Math.abs(b._score - a._score) > 0.02) return b._score - a._score;
+                return (tagMatchIds.has(b.id) ? 1 : 0) - (tagMatchIds.has(a.id) ? 1 : 0);
+            });
+        }
 
-            // ② FULL LABEL COVERAGE — how many total Vision labels match?
-            let labelScore = 0;
-            for (const vl of vision_labels) {
-                const lbl  = (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim();
-                const conf = typeof vl.confidence === 'number' ? vl.confidence : 0.5;
-                if (lbl && haystack.includes(lbl)) labelScore += conf;
+        let final = scored.slice(0, 15);
+
+        if (mode === 'aesthetic') {
+            // Diversity pass — one item per category, preserving the color-sorted order
+            // so exact-color-matched items always appear before family matches
+            const seenCategories = new Set();
+            const diverseFinal   = [];
+            const remainder      = [];
+            for (const p of final) {
+                if (!seenCategories.has(p.category)) {
+                    seenCategories.add(p.category);
+                    diverseFinal.push(p);
+                } else {
+                    remainder.push(p);
+                }
             }
-            const normLabel = Math.min(labelScore / 3, 1);
-
-            // ③ TAG OVERLAP BONUS
-            const tagBonus = tagMatchIds.has(product.id) ? 0.2 : 0;
-
-            let combined;
-            if (hasImageSearch) {
-                // CLIP image search ran → image similarity is king
-                // 65% image similarity | 15% label match | 10% tag bonus | 10% text hybrid
-                combined = (product._image_score  * 0.65)
-                         + (normLabel             * 0.15)
-                         + (tagBonus              * 0.10)
-                         + (product._hybrid_score * 0.10);
-            } else {
-                // No image sent → fall back to label-first text ranking
-                // 55% primary label | 20% label coverage | 15% text hybrid | 10% tag bonus
-                combined = (primaryScore           * 0.55)
-                         + (normLabel              * 0.20)
-                         + (product._hybrid_score  * 0.15)
-                         + (tagBonus               * 0.10);
-            }
-
-            return { ...product, _score: combined };
-        });
-
-        // Sort descending; tiebreak by tag match
-        scored.sort((a, b) => {
-            if (Math.abs(b._score - a._score) > 0.02) return b._score - a._score;
-            return (tagMatchIds.has(b.id) ? 1 : 0) - (tagMatchIds.has(a.id) ? 1 : 0);
-        });
-        let final = scored.slice(0, 8);
+            // Fill remaining slots with next-best color matches
+            final = [...diverseFinal, ...remainder].slice(0, 8);
+        } else {
+            final = final.slice(0, 8);
+        }
 
 
         // ── Step 5: Fallback — always return 8 products ───────────────────────
