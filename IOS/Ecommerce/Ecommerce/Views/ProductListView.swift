@@ -144,14 +144,50 @@ struct ProductListView: View {
                                     .padding(.bottom, 8)
                                 } else {
                                     SearchSuggestionView(response: response) { term in
-                                        searchViewModel.searchText = term
-                                        searchViewModel.performSearch(query: term)
+                                        // "Search in <Category>" suggestions currently come through as plain strings.
+                                        // If the selected term matches a suggested category, treat it as a category filter
+                                        // and keep the user's current query.
+                                        if response.categories.contains(term) {
+                                            searchViewModel.selectedCategory = term
+                                            searchViewModel.applyFilters()
+                                        } else {
+                                            searchViewModel.searchText = term
+                                            searchViewModel.performSearch(query: term)
+                                        }
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.bottom, 8)
                                 }
                             }
                             
+                            // MARK: — Category Chips (works during search too)
+                            if !categories.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        CategoryChip(title: "All", isSelected: searchViewModel.selectedCategory == nil) {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                searchViewModel.selectedCategory = nil
+                                                if searchViewModel.hasSearched {
+                                                    searchViewModel.applyFilters()
+                                                }
+                                            }
+                                        }
+                                        ForEach(categories, id: \.self) { category in
+                                            CategoryChip(title: category, isSelected: searchViewModel.selectedCategory == category) {
+                                                withAnimation(.spring(response: 0.3)) {
+                                                    searchViewModel.selectedCategory = category
+                                                    if searchViewModel.hasSearched {
+                                                        searchViewModel.applyFilters()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 8)
+                                }
+                            }
+
                             // MARK: — Filter Chips (only when searching)
                             if searchViewModel.hasSearched {
                                 if searchViewModel.selectedCategory != nil || searchViewModel.maxPrice != nil || !searchViewModel.selectedTags.isEmpty {
@@ -179,22 +215,6 @@ struct ProductListView: View {
                                         .padding(.horizontal, 16)
                                         .padding(.bottom, 8)
                                     }
-                                }
-                            } else if !categories.isEmpty {
-                                // MARK: — Browse Categories (no search yet)
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 8) {
-                                        CategoryChip(title: "All", isSelected: searchViewModel.selectedCategory == nil) {
-                                            withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = nil }
-                                        }
-                                        ForEach(categories, id: \.self) { category in
-                                            CategoryChip(title: category, isSelected: searchViewModel.selectedCategory == category) {
-                                                withAnimation(.spring(response: 0.3)) { searchViewModel.selectedCategory = category }
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
                                 }
                             }
                             

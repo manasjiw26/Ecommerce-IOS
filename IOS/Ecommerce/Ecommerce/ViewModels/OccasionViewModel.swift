@@ -33,6 +33,27 @@ class OccasionViewModel: ObservableObject {
                 for rawTag in tags {
                     let tag = rawTag.lowercased().trimmingCharacters(in: .whitespaces)
                     allTags.insert(tag)
+                    tagCounts[tag, default: 0] += item.quantity
+                }
+            }
+
+            // If tags are missing (common if backend join omits them), infer a few high-signal tags from name/category.
+            if item.product.tags == nil || item.product.tags?.isEmpty == true {
+                let name = item.product.name.lowercased()
+                let cat  = (item.product.category ?? "").lowercased()
+                let hay  = "\(name) \(cat)"
+
+                if hay.contains("glass") || hay.contains("wine") || hay.contains("platter") || hay.contains("hosting") {
+                    allTags.insert("hosting")
+                    tagCounts["hosting", default: 0] += item.quantity
+                }
+                if hay.contains("candle") || hay.contains("decor") || hay.contains("vase") || hay.contains("scent") || hay.contains("pillow") {
+                    allTags.insert("home_sanctuary")
+                    tagCounts["home_sanctuary", default: 0] += item.quantity
+                }
+                if hay.contains("pan") || hay.contains("pot") || hay.contains("chef") || hay.contains("knife") || hay.contains("oven") {
+                    allTags.insert("culinary")
+                    tagCounts["culinary", default: 0] += item.quantity
                 }
             }
         }
@@ -42,9 +63,11 @@ class OccasionViewModel: ObservableObject {
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             
-        let itemCount = Int64(items.count)
+        // Prefer quantity-weighted count (a cart with 1 item x10 should not look like "1").
+        let itemCount = Int64(items.reduce(0) { $0 + $1.quantity })
         
-        let avgPrice = totalPrice / Double(items.count)
+        let denom = max(1, items.reduce(0) { $0 + $1.quantity })
+        let avgPrice = totalPrice / Double(denom)
         let priceTier: String
         if avgPrice < 30 { priceTier = "budget" }
         else if avgPrice < 100 { priceTier = "mid-range" }
@@ -87,6 +110,10 @@ class OccasionViewModel: ObservableObject {
             
             // 3. Update UI State and Trigger Recommendations
             updateOccasionState(for: predictedOccasion)
+            if currentOccasion == nil {
+                // If model returns an unexpected label, degrade gracefully.
+                fallbackDetection(tagCounts: tagCounts)
+            }
             
         } catch {
             print("❌ Core ML Prediction Error: \(error.localizedDescription)")
