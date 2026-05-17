@@ -5,6 +5,16 @@ struct RegistryDashboardView: View {
     
     var body: some View {
         List {
+            Section {
+                AIStatusBar(messages: [
+                    "✦ Building your perfect registry",
+                    "✦ I can find gifts in any budget",
+                    "✦ Analyzing wish patterns",
+                    "✦ Smart bundles available for your list"
+                ])
+            }
+            .listRowBackground(Color.clear)
+            
             if let registry = viewModel.currentRegistry {
                 Section(header: Text("Registry Details")) {
                     Text("Event: \(registry.eventType)")

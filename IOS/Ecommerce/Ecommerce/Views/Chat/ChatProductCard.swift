@@ -44,23 +44,66 @@ struct ChatProductCard: View {
                         .frame(width: 110, alignment: .leading)
                 }
 
-                Button(action: {
-                    let impact = UIImpactFeedbackGenerator(style: .light)
-                    impact.impactOccurred()
-                    cartManager.addToCart(product: product)
-                    RecommendationEngine.shared.logEvent(productId: product.id, eventType: "add_to_cart")
-                }) {
-                    Text("Add to cart")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.black)
-                        .clipShape(Capsule())
+                let cartQty = cartManager.items.first(where: { $0.product.id == product.id })?.quantity ?? 0
+                
+                if cartQty > 0 {
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            let impact = UIImpactFeedbackGenerator(style: .light)
+                            impact.impactOccurred()
+                            cartManager.removeFromCart(product: product)
+                        }) {
+                            Image(systemName: "minus")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Color.black)
+                                .clipShape(Circle())
+                        }
+                        
+                        Text("\(cartQty)")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                            .frame(minWidth: 16)
+                            .id("cartQty-\(product.id)-\(cartQty)") // Force re-render to update animations
+                        
+                        Button(action: {
+                            let impact = UIImpactFeedbackGenerator(style: .light)
+                            impact.impactOccurred()
+                            cartManager.addToCart(product: product)
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Color.black)
+                                .clipShape(Circle())
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity)
+                    .transition(.scale.combined(with: .opacity))
+                } else {
+                    Button(action: {
+                        let impact = UIImpactFeedbackGenerator(style: .light)
+                        impact.impactOccurred()
+                        cartManager.addToCart(product: product)
+                        RecommendationEngine.shared.logEvent(productId: product.id, eventType: "add_to_cart")
+                    }) {
+                        Text("Add to cart")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.black)
+                            .clipShape(Capsule())
+                    }
+                    .padding(.top, 4)
+                    .transition(.scale.combined(with: .opacity))
                 }
-                .padding(.top, 4)
             }
             .padding(10)
         }

@@ -3,7 +3,6 @@ import SwiftUI
 import UIKit
 import UserNotifications
 import Combine
-import Combine
 
 @MainActor
 class ChatViewModel: ObservableObject {
@@ -134,7 +133,7 @@ class ChatViewModel: ObservableObject {
             replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "Image search is not fully implemented yet, but I can recommend items instead!", attachments: [.quickReplies(["Show recommendations"])]))
             selectedImage = nil
 
-        case .sustainabilityFilter(let query):
+        case .sustainabilityFilter(_):
             let keywords = ["non-toxic", "bpa-free", "eco", "organic", "stainless", "ceramic", "bamboo", "recycled"]
             let products = productViewModel?.products.filter { p in
                 keywords.contains(where: { p.description?.lowercased().contains($0) == true || p.name.lowercased().contains($0) })
@@ -603,12 +602,18 @@ class ChatViewModel: ObservableObject {
         let userName = AuthSession.shared.currentUser?.name ?? "there"
         let language = context.preferredLanguage == "hi" ? "Respond in Hindi." : "Respond in English."
         let budget = sessionBudget.map { " The user's budget is \(formatPrice($0))." } ?? ""
+        
+        var productContext = ""
+        if let pid = context.lastViewedProductId, let product = productViewModel?.products.first(where: { $0.id == pid }) {
+            productContext = "The user is currently viewing: \(product.name) (Category: \(product.category ?? "N/A"), Price: \(formatPrice(product.price)), Stock: \(product.stock ?? 0), Description: \(product.description ?? "N/A")). Answer questions, suggest complementary items, or compare alternatives based on this product."
+        }
 
         return """
         You are a shopping assistant for Hearth & Table. Be warm and friendly but EXTREMELY concise.
         NEVER introduce yourself as an AI or say "As an AI". You are simply the store's assistant.
         CRITICAL: Your responses MUST be 1 or 2 short sentences maximum. Under 20 words.
         The user's name is \(userName). Their cart currently has: \(cartSummary).\(budget)
+        \(productContext)
         Only state product facts (price, stock) that come from real API data.
         If asked something outside shopping, pivot back to home goods.
         Never repeat credit card numbers or payment details.
@@ -885,15 +890,90 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    func sendWelcomeMessage() {
+    func sendWelcomeMessage(withBubbleContext bubbleContext: String? = nil) {
         guard messages.isEmpty else { return }
+        
         let name = AuthSession.shared.currentUser?.name?.components(separatedBy: " ").first ?? ""
-        let greeting = name.isEmpty ? "Hi! How can I help you today?" : "Hi \(name)! How can I help you today?"
-        messages.append(ChatMessage(
-            role: .assistant,
-            text: greeting,
-            attachments: [.quickReplies(["Show me recommendations", "Help me find a gift", "Track my order"])]
-        ))
+        var greeting = name.isEmpty ? "Hi! How can I help you today?" : "Hi \(name)! How can I help you today?"
+        var quickReplies: [String] = ["Show me recommendations", "Help me find a gift", "Track my order"]
+        var attachments: [ChatAttachment] = []
+        
+        if let pid = context.lastViewedProductId, let product = productViewModel?.products.first(where: { $0.id == pid }) {
+            greeting = "I see you're looking at the \(product.name). How can I help you with it?"
+            quickReplies = ["What are the specs?", "Show similar items", "Does it have a warranty?"]
+            attachments.append(.products([product]))
+        }
+        
+        guard let bubbleContext = bubbleContext, !bubbleContext.isEmpty else {
+            attachments.append(.quickReplies(quickReplies))
+            messages.append(ChatMessage(role: .assistant, text: greeting, attachments: attachments))
+            return
+        }
+        
+        let cleaned = bubbleContext.replacingOccurrences(of: "✦", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if cleaned.lowercased().contains("reviews") {
+            quickReplies = ["What do people like?", "Any negative reviews?"]
+        } else if cleaned.lowercased().contains("bundle") || cleaned.lowercased().contains("pair") {
+            quickReplies = ["Show me the bundles", "What pairs well?"]
+            if cartManager?.items.isEmpty == false {
+                attachments.append(.cartSummary)
+            }
+        } else if cleaned.lowercased().contains("stock") {
+            quickReplies = ["Is it in stock?", "When will it ship?"]
+        } else if cleaned.lowercased().contains("registry") {
+            quickReplies = ["Help me build it", "What am I missing?"]
+        } else if cleaned.lowercased().contains("tracking") || cleaned.lowercased().contains("deliveries") || cleaned.lowercased().contains("return") {
+            quickReplies = ["Where is my order?", "Can I return an item?"]
+            if let lastOrder = OrderManager.shared.orders.first {
+                attachments.append(.order(lastOrder))
+            }
+        } else if cleaned.lowercased().contains("feed") || cleaned.lowercased().contains("taste") {
+            quickReplies = ["Show recommendations", "Help me find a gift"]
+            let topRecs = Array(RecommendationEngine.shared.recommendedProducts.prefix(2))
+            if !topRecs.isEmpty {
+                attachments.append(.products(topRecs))
+            }
+        } else {
+            quickReplies = ["Tell me more", "Let's explore"]
+        }
+        
+        attachments.append(.quickReplies(quickReplies))
+        
+        // Show loading state while AI generates a dynamic greeting
+        messages.append(ChatMessage(role: .assistant, text: "", attachments: attachments, isLoading: true))
+        let loadingIndex = messages.count - 1
+        isLoading = true
+        
+        Task {
+            let contextualSystemPrompt = """
+            \(buildSystemPrompt())
+            
+            CRITICAL INSTRUCTION:
+            The user just tapped on your thought bubble that said: '\(cleaned)'.
+            You MUST generate a 1-sentence opening greeting that smoothly transitions from this thought.
+            DO NOT use generic greetings like "Hi! How can I help you today?".
+            Act as if you were just thinking about that topic and the user interrupted you to ask about it.
+            """
+            
+            let userPrompt = "Generate the personalized greeting."
+            
+            do {
+                let dynamicGreeting = try await callLLM(system: contextualSystemPrompt, user: userPrompt)
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: dynamicGreeting,
+                    attachments: attachments
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "You caught me thinking about \(cleaned.lowercased()). How can I help you?",
+                    attachments: attachments
+                ))
+            }
+            isLoading = false
+        }
     }
 }
 

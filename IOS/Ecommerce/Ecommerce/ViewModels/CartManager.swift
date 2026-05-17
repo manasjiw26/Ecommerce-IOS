@@ -89,6 +89,11 @@ class CartManager: ObservableObject {
             }
         }
         RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_add")
+        NotificationCenter.default.post(
+            name: .aiCartUpdated,
+            object: nil,
+            userInfo: ["productName": product.name, "itemCount": items.count]
+        )
         saveCart()
     }
     

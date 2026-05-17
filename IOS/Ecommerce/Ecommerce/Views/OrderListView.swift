@@ -67,6 +67,19 @@ struct OrderListView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
+                        // AI monitoring banner
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("✦ Monitoring \(orderManager.orders.count) deliveries")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .italic()
+                            Spacer()
+                        }
+                        .padding(.horizontal, 4)
+                        
                         ForEach(orderManager.orders) { placed in
                             NavigationLink(destination: OrderDetailView(order: placed)) {
                                 OrderCardView(order: toOrder(placed))
@@ -77,6 +90,9 @@ struct OrderListView: View {
                     .padding()
                 }
                 .background(Color(UIColor.systemGroupedBackground))
+                .onAppear {
+                    NotificationCenter.default.post(name: .aiOrdersViewed, object: nil)
+                }
             }
         }
     }

@@ -3,6 +3,7 @@ import SwiftUI
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
+    @EnvironmentObject var aiPresence: AIPresenceManager
     @StateObject private var occasionViewModel = OccasionViewModel()
     @StateObject private var pairItWithViewModel = PairItWithViewModel()
     @State private var showingCheckout = false
@@ -10,6 +11,7 @@ struct CartView: View {
     @State private var isCheckingStock = false
     @State private var occasion: String?
     @State private var isDetectingOccasion = false
+    @State private var occasionVisible = false
 
     var outOfStockItems: [CartItem] {
         cartManager.items.filter { item in
@@ -45,13 +47,16 @@ struct CartView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Occasion section — original logic, untouched
+                        // Occasion section — animated entrance
                         if let occasion = occasionViewModel.currentOccasion {
                             NavigationLink(destination: OccasionSuggestionsView(occasion: occasion)) {
                                 OccasionCardView(occasion: occasion)
                             }
                             .buttonStyle(PlainButtonStyle())
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .opacity(occasionVisible ? 1 : 0)
+                            .offset(y: occasionVisible ? 0 : 20)
+                            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: occasionVisible)
+                            .onAppear { occasionVisible = true }
                         }
                         
                         // Legacy/experimental "occasion insight" UI (kept commented so nothing is lost).
@@ -131,6 +136,19 @@ struct CartView: View {
                                 .fontWeight(.bold)
                         }
                         .padding(.vertical)
+                        
+                        // AI cart insight
+                        if cartManager.items.count > 1 {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("✦ \(cartManager.items.count) items curated by your browsing pattern")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .italic()
+                            }
+                        }
 
                         Button(action: {
                             if UserDefaults.standard.bool(forKey: "isLoggedIn") {
@@ -165,6 +183,9 @@ struct CartView: View {
                 .environmentObject(cartManager)
         }
         .task {
+            // Sync AI loading state
+            aiPresence.isAIActive = true
+            
             // Priority 1: Detect Occasions (untouched)
             occasionViewModel.detectOccasion(from: cartManager.items)
 
@@ -174,6 +195,8 @@ struct CartView: View {
             // Priority 3: Stock check
             await refreshStock()
             await fetchOccasion()
+            
+            aiPresence.isAIActive = false
         }
         .onChange(of: cartManager.items) {
             Task {

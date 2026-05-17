@@ -1,10 +1,14 @@
 import SwiftUI
+import Combine
 
 struct OccasionCardView: View {
     let occasion: Occasion
     
     var body: some View {
         ZStack(alignment: .bottomLeading) {
+            // AI ambient glow (first layer)
+            AIAura(intensity: 0.04)
+            
             // Background Image with Gradient
             if occasion.isLocalAsset, let assetName = occasion.backgroundImageUrl {
                 Image(assetName)

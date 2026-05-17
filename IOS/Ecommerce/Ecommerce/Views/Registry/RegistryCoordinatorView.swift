@@ -31,6 +31,9 @@ struct RegistryCoordinatorView: View {
                 .task {
                     await viewModel.fetchUserRegistry()
                 }
+                .onAppear {
+                    NotificationCenter.default.post(name: .aiRegistryViewed, object: nil)
+                }
             }
         }
     }

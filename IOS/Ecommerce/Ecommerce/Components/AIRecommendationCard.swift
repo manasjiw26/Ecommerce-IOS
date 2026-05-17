@@ -1,8 +1,10 @@
 import SwiftUI
+import Combine
 
 struct AIRecommendationCard: View {
     let product: Product
     var showAIPickBadge: Bool = true
+    @State private var appeared = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -29,19 +31,8 @@ struct AIRecommendationCard: View {
                 }
                 
                 if showAIPickBadge {
-                    // AI Badge
-                    HStack(spacing: 3) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("AI Pick")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.75))
-                    .clipShape(Capsule())
-                    .padding(8)
+                    AISparkBadge(label: "AI Pick", size: .small)
+                        .padding(8)
                 }
             }
             .frame(width: 150, height: 150)
@@ -59,7 +50,7 @@ struct AIRecommendationCard: View {
                     .foregroundColor(.secondary)
                 
                 if let reasoning = product.aiReasoning {
-                    Text(reasoning)
+                    TypewriterText(fullText: reasoning, messageId: UUID())
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .italic()
@@ -72,5 +63,13 @@ struct AIRecommendationCard: View {
             .padding(.bottom, 4)
         }
         .frame(width: 150)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 12)
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1)) {
+                appeared = true
+            }
+        }
+        .onDisappear { appeared = false }
     }
 }

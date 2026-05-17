@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProductListView: View {
     @EnvironmentObject private var viewModel: ProductViewModel
+    @EnvironmentObject var aiPresence: AIPresenceManager
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var visualVM = VisualSearchViewModel()
 
@@ -142,6 +143,17 @@ struct ProductListView: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
                             .padding(.bottom, 8)
+                            
+                            // AI Status Bar
+                            AIStatusBar(messages: [
+                                "✦ Personalizing your feed",
+                                "✦ Prices verified just now",
+                                "✦ 3 new arrivals match your taste",
+                                "✦ Recommendations refreshed"
+                            ])
+                            .padding(.horizontal, 20)
+                            .padding(.top, 4)
+                            .padding(.bottom, 2)
 
                             /*
                              Legacy search UI (kept commented so nothing is lost):
@@ -282,7 +294,14 @@ struct ProductListView: View {
                                             width: productCardWidth,
                                             height: productCardHeight
                                         )
+                                            .overlay(alignment: .topLeading) {
+                                                if product.aiReasoning != nil {
+                                                    AISparkBadge(label: "AI Pick", size: .small)
+                                                        .padding(8)
+                                                }
+                                            }
                                             .onAppear {
+                                                RecommendationEngine.shared.logEvent(productId: product.id, eventType: "impression")
                                                 if searchViewModel.hasSearched && product.id == displayedProducts.last?.id {
                                                     searchViewModel.loadMore()
                                                 }
@@ -358,6 +377,18 @@ struct ProductListView: View {
                     await refreshPersonalizedHome()
                 } else if cachedPersonalizedProducts.isEmpty {
                     cachedPersonalizedProducts = recoEngine.personalize(viewModel.products)
+                }
+            }
+            .onChange(of: searchViewModel.isSearching) { _, isSearching in
+                aiPresence.isAIActive = isSearching
+            }
+            .onChange(of: searchViewModel.hasSearched) { _, hasSearched in
+                if hasSearched {
+                    NotificationCenter.default.post(
+                        name: .aiSearchPerformed,
+                        object: nil,
+                        userInfo: ["query": searchViewModel.searchText]
+                    )
                 }
             }
         }

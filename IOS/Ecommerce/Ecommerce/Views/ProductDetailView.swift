@@ -5,9 +5,13 @@ struct ProductDetailView: View {
     let product: Product
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
+    @EnvironmentObject var aiPresence: AIPresenceManager
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @State private var similarProducts: [Product] = []
     @State private var isLoadingSimilar = true
+    @State private var showReasoning = false
+    @State private var showSimilar = false
+    @State private var scanPulse = false
     private let imageHeight: CGFloat = 340
     
     var quantityInCart: Int {
@@ -59,29 +63,30 @@ struct ProductDetailView: View {
                     
                     Divider()
                     
-                    // AI Reasoning Card (only shown if AI recommended this)
-                    if let reasoning = product.aiReasoning {
+                    // AI Reasoning Card (animated in with TypewriterText)
+                    if showReasoning, let reasoning = product.aiReasoning {
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "sparkles")
                                 .font(.subheadline)
                                 .foregroundColor(.primary)
                                 .padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text("Why we picked this")
                                     .font(.caption)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.secondary)
-                                    .textCase(.uppercase)
-                                    .tracking(0.5)
-                                Text(reasoning)
+                                TypewriterText(fullText: reasoning, messageId: UUID())
                                     .font(.subheadline)
                                     .foregroundColor(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         .padding(14)
-                        .background(Color(UIColor.systemGray6))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .background(AIAura(intensity: 0.04))
+                        .cornerRadius(12)
+                        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                         
                         Divider()
                     }
@@ -131,6 +136,7 @@ struct ProductDetailView: View {
                                     .font(.subheadline)
                                 Text("Suggested Products")
                                     .font(.headline)
+                                AISparkBadge(label: "AI Similar", size: .tiny)
                             }
                             
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -153,12 +159,7 @@ struct ProductDetailView: View {
                                                     }
                                                     
                                                     if recProduct.aiReasoning != nil {
-                                                        Image(systemName: "sparkles")
-                                                            .font(.system(size: 10, weight: .bold))
-                                                            .foregroundColor(.white)
-                                                            .padding(6)
-                                                            .background(Color.black.opacity(0.7))
-                                                            .clipShape(Circle())
+                                                        AISparkBadge(label: "AI Pick", size: .tiny)
                                                             .padding(6)
                                                     }
                                                 }
@@ -195,6 +196,9 @@ struct ProductDetailView: View {
                                 .padding(.bottom, 4)
                             }
                         }
+                        .opacity(showSimilar ? 1 : 0)
+                        .offset(y: showSimilar ? 0 : 16)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showSimilar)
                     }
                 }
                 .padding(20)
@@ -206,8 +210,29 @@ struct ProductDetailView: View {
             addToCartBar
         }
         .onAppear {
+            // Notify presence system
+            NotificationCenter.default.post(
+                name: .aiDidSpotProduct,
+                object: nil,
+                userInfo: ["name": product.name, "category": product.category ?? ""]
+            )
+            aiPresence.lastViewedProduct = product
+            aiPresence.isAIActive = true
+            
+            // Stagger entrance animations
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { showReasoning = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { showSimilar = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                aiPresence.isAIActive = false
+            }
+            
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
             productViewModel.activeProductId = product.id
+            scanPulse = true
         }
         .onDisappear {
             if productViewModel.activeProductId == product.id {
@@ -253,6 +278,18 @@ struct ProductDetailView: View {
                 }
             }
             .frame(width: geometry.size.width, height: imageHeight)
+            .overlay(
+                LinearGradient(
+                    colors: [.clear, .black.opacity(scanPulse ? 0.45 : 0.2)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .animation(
+                    .easeInOut(duration: 2.2).repeatForever(autoreverses: true),
+                    value: scanPulse
+                )
+                .allowsHitTesting(false)
+            )
         }
         .frame(height: imageHeight)
     }
