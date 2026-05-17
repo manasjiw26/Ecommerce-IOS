@@ -65,8 +65,11 @@ class RegistryService {
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard httpResponse.statusCode == 200 else {
+            let apiErr = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            throw NSError(domain: "RegistryService", code: httpResponse.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: apiErr?.error ?? "Failed to load registries (\(httpResponse.statusCode))"])
         }
         return try JSONDecoder().decode([Registry].self, from: data)
     }
@@ -77,8 +80,11 @@ class RegistryService {
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard httpResponse.statusCode == 200 else {
+            let apiErr = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            throw NSError(domain: "RegistryService", code: httpResponse.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: apiErr?.error ?? "Failed to load dashboard (\(httpResponse.statusCode))"])
         }
         return try JSONDecoder().decode(RegistryDashboardResponse.self, from: data)
     }
@@ -92,8 +98,11 @@ class RegistryService {
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard httpResponse.statusCode == 200 else {
+            let apiErr = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            throw NSError(domain: "RegistryService", code: httpResponse.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: apiErr?.error ?? "Failed to create registry (\(httpResponse.statusCode))"])
         }
         return try JSONDecoder().decode(Registry.self, from: data)
     }

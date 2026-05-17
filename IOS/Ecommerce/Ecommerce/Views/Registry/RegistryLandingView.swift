@@ -91,6 +91,10 @@ struct RegistryLandingView: View {
                         RegistryInlineLoadingView(message: "Loading registries...")
                     } else if let loadError, service.registries.isEmpty {
                         VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+
                             Text(loadError)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
@@ -110,6 +114,25 @@ struct RegistryLandingView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
+                    } else if service.registries.isEmpty && !isLoadingRegistries {
+                        // Empty state — user logged in but has no registries yet
+                        VStack(spacing: 16) {
+                            Image(systemName: "gift")
+                                .font(.system(size: 44))
+                                .foregroundColor(.secondary.opacity(0.5))
+
+                            Text("No registries yet")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+
+                            Text("Tap \"Create Registry\" above to start curating your list.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 32)
                     } else {
                         // MARK: - My Registries
                         let owned = service.registries.filter { $0.isOwner }
@@ -198,7 +221,8 @@ struct RegistryLandingView: View {
         do {
             try await service.fetchRegistriesFromBackend()
         } catch {
-            loadError = "Could not load registries. Please try again."
+            // Show the real error from the backend (FK violation, network issue, etc.)
+            loadError = error.localizedDescription
         }
         isLoadingRegistries = false
     }
