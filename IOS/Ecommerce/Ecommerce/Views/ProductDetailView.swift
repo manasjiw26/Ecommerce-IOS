@@ -3,6 +3,8 @@ import UIKit
 
 struct ProductDetailView: View {
     let product: Product
+    var showCloseButton: Bool = false
+    @Environment(\.dismiss) var dismiss
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
     @ObservedObject private var recoEngine = RecommendationEngine.shared
@@ -311,6 +313,20 @@ struct ProductDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            if showCloseButton {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        dismiss()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(Color(.secondaryLabel))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             addToCartBar
         }

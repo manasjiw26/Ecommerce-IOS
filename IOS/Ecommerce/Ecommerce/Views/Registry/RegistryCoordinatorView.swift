@@ -1,35 +1,60 @@
 import SwiftUI
 
 struct RegistryCoordinatorView: View {
-    @StateObject private var viewModel = RegistryViewModel()
-    @EnvironmentObject var authSession: AuthSession
+    @State private var path = NavigationPath()
+    @State private var isJoiningFromLink = false
+    @State private var joinError: String? = nil
     
     var body: some View {
-        NavigationStack {
-            if authSession.currentUser == nil {
-                VStack(spacing: 20) {
-                    Image(systemName: "gift.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(.gray)
-                    Text("Please log in to create or view your Registry.")
-                        .font(.title3)
-                        .multilineTextAlignment(.center)
-                        .padding()
+        NavigationStack(path: $path) {
+            RegistryLandingView { selectedRegistry in
+                path.append(selectedRegistry)
+            }
+            .navigationDestination(for: MockRegistryExtended.self) { registry in
+                if registry.isOwner {
+                    RegistryDashboardView(registry: registry)
+                } else {
+                    RegistryGuestLandingView(registry: registry)
                 }
-                .navigationTitle("Registry")
-            } else {
-                Group {
-                    if viewModel.isLoading && viewModel.currentRegistry == nil {
-                        ProgressView("Loading Registry...")
-                    } else if viewModel.currentRegistry != nil {
-                        RegistryDashboardView(viewModel: viewModel)
-                    } else {
-                        CreateRegistryView(viewModel: viewModel)
+            }
+            .navigationTitle("Registry")
+            .navigationBarTitleDisplayMode(.large)
+            .overlay {
+                if isJoiningFromLink {
+                    RegistryLoadingOverlay(message: "Opening Registry...")
+                }
+            }
+            .alert("Registry Error", isPresented: Binding(
+                get: { joinError != nil },
+                set: { if !$0 { joinError = nil } }
+            )) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(joinError ?? "")
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openRegistryToken)) { notification in
+            if let token = notification.object as? String {
+                Task {
+                    await MainActor.run { isJoiningFromLink = true; joinError = nil }
+                    do {
+                        if let registry = try await MockRegistryService.shared.joinRegistryByCode(code: token) {
+                            await MainActor.run {
+                                isJoiningFromLink = false
+                                path.append(registry)
+                            }
+                        } else {
+                            await MainActor.run {
+                                isJoiningFromLink = false
+                                joinError = "Could not find registry for that link."
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            isJoiningFromLink = false
+                            joinError = error.localizedDescription
+                        }
                     }
-                }
-                .navigationTitle("Registry")
-                .task {
-                    await viewModel.fetchUserRegistry()
                 }
             }
         }
