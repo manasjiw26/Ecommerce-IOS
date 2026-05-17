@@ -1034,4 +1034,340 @@ Return ONLY valid JSON: {"verdict":"...","score":82,"percentile":"...","one_line
     }
 });
 
+// ─────────────────────────────────────────────
+// Missing endpoints from docs/worktobedone
+// (implemented here so Shop/Cart/Chat flows work end-to-end)
+// ─────────────────────────────────────────────
+
+function nowIso() {
+    return new Date().toISOString();
+}
+
+function safeUuid() {
+    // Node 18+ has crypto.randomUUID; keep fallback just in case.
+    try {
+        // eslint-disable-next-line node/no-unsupported-features/node-builtins
+        return require('crypto').randomUUID();
+    } catch {
+        return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+}
+
+function normalizeCartItems(cart_items) {
+    if (!Array.isArray(cart_items)) return [];
+    return cart_items
+        .map((x) => ({
+            product_id: x.product_id ?? x.id ?? x.productId ?? null,
+            name: x.name ?? x.product_name ?? x.product?.name ?? '',
+            category: x.category ?? x.product?.category ?? null,
+            price: Number(x.price ?? x.product?.price ?? 0),
+            tags: Array.isArray(x.tags) ? x.tags : (Array.isArray(x.product?.tags) ? x.product.tags : []),
+            quantity: Number(x.quantity ?? 1) || 1,
+        }))
+        .filter((x) => x.product_id || x.name);
+}
+
+// POST /ai/occasion-detect
+// Body: { cart_items: [{product_id,name,category,price,tags,quantity}], device_id? }
+router.post('/occasion-detect', async (req, res) => {
+    try {
+        const { cart_items, device_id } = req.body || {};
+        const items = normalizeCartItems(cart_items);
+        if (!items.length) return res.status(400).json({ error: 'cart_items array required' });
+
+        // Heuristic first (fast + works offline)
+        const text = items.map((i) => `${i.name} ${i.category || ''} ${(i.tags || []).join(' ')}`).join(' ').toLowerCase();
+        let label = 'unknown';
+        if (/(wine|glass|martini|platter|serveware|hosting|bar)/.test(text)) label = 'hosting';
+        else if (/(candle|decor|vase|scent|pillow|blanket|sanctuary)/.test(text)) label = 'home_sanctuary';
+        else if (/(pan|pot|skillet|knife|chef|cookware|bakeware|oven|culinary)/.test(text)) label = 'culinary';
+
+        // If Gemini is available, refine into a richer response (but keep the heuristic label as fallback)
+        let ai = null;
+        if (process.env.GEMINI_API_KEY) {
+            const prompt = `
+You are an e-commerce intent classifier for a premium home & kitchen store.
+Given cart items, classify the shopping occasion.
+Return ONLY valid JSON: {"label":"hosting|home_sanctuary|culinary|wedding|housewarming|holiday|unknown","confidence":0.0,"reason":"one sentence","recommended_tags":["..."],"suggested_next_actions":["..."]}.
+Cart items: ${JSON.stringify(items.map(i => ({ name: i.name, category: i.category, tags: i.tags, price: i.price, quantity: i.quantity })))}
+`;
+            ai = await askGeminiJSON(prompt);
+        }
+
+        const out = {
+            label: ai?.label || label,
+            confidence: typeof ai?.confidence === 'number' ? ai.confidence : (label === 'unknown' ? 0.4 : 0.75),
+            reason: ai?.reason || 'Derived from cart contents.',
+            recommended_tags: ai?.recommended_tags || (label === 'unknown' ? [] : [label]),
+            suggested_next_actions: ai?.suggested_next_actions || [],
+        };
+
+        // Best-effort log: store parsed_intent + result_count in recent_searches if available
+        if (device_id) {
+            supabase
+                .from('recent_searches')
+                .insert([{ query: `occasion:${out.label}`, device_id, parsed_intent: out, result_count: 0 }])
+                .then(() => {})
+                .catch(() => {});
+        }
+
+        return res.json(out);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /ai/resurface?device_id=...
+router.get('/resurface', async (req, res) => {
+    try {
+        const device_id = String(req.query.device_id || '').trim();
+        if (!device_id) return res.status(400).json({ error: 'device_id required' });
+
+        // Prefer the dedicated save_for_later table if it exists.
+        const { data: saved, error } = await supabase
+            .from('save_for_later')
+            .select('id, product_id, saved_at, products:products(*)')
+            .eq('device_id', device_id)
+            .order('saved_at', { ascending: false })
+            .limit(20);
+        if (error) throw error;
+
+        const allSaved = (saved || []).map((x) => ({
+            id: x.id,
+            saved_at: x.saved_at,
+            product: fixImageUrl(x.products || {}),
+            product_id: x.product_id,
+        }));
+
+        const top = allSaved.slice(0, 3);
+
+        let resurface = top.map((x) => ({
+            product_id: x.product_id,
+            product_name: x.product?.name || 'Saved item',
+            reason: 'This is still in your saved list — great match based on what you were browsing.',
+            urgency: 'medium',
+        }));
+
+        if (process.env.GEMINI_API_KEY && top.length) {
+            const prompt = `
+A customer saved these items for later: ${top.map((x) => x.product?.name).filter(Boolean).join(', ')}.
+Write a compelling, personalized reason for each item why they should move it back to cart now. Max 3 items.
+Return ONLY valid JSON array:
+[{"product_id":13,"product_name":"...","reason":"...","urgency":"low|medium|high"}]
+`;
+            const ai = await askGeminiJSON(prompt);
+            if (Array.isArray(ai)) resurface = ai;
+        }
+
+        return res.json({ resurface, all_saved: allSaved });
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing DB tables. Ensure migrations ran.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /ai/compare-products
+// Body: { product_ids: [id1,id2,(id3)] }
+router.post('/compare-products', async (req, res) => {
+    try {
+        const { product_ids } = req.body || {};
+        if (!Array.isArray(product_ids) || product_ids.length < 2) return res.status(400).json({ error: 'product_ids (2-3) required' });
+
+        const ids = product_ids.slice(0, 3).filter(Boolean);
+        const { data: products, error } = await supabase.from('products').select('*').in('id', ids);
+        if (error) throw error;
+        (products || []).forEach(fixImageUrl);
+
+        const prompt = `
+You are a product expert for a premium home & kitchen store.
+Compare these products and help the customer decide.
+Return ONLY valid JSON:
+{"winner_id":${ids[0]},"winner_reason":"...","comparison_table":[{"aspect":"Price","values":{}}],"product_summaries":[{"id":${ids[0]},"pros":[],"cons":[],"best_for":""}],"recommendation":"..."}
+Products: ${JSON.stringify((products || []).map(p => ({ id: p.id, name: p.name, price: p.price, category: p.category, description: p.description, tags: p.tags })))}
+`;
+
+        let result = null;
+        if (process.env.GEMINI_API_KEY) result = await askGeminiJSON(prompt);
+        if (!result || !result.winner_id) {
+            const cheapest = (products || []).slice().sort((a, b) => Number(a.price || 0) - Number(b.price || 0))[0];
+            result = {
+                winner_id: cheapest?.id,
+                winner_reason: 'Best value based on price.',
+                comparison_table: [{ aspect: 'Price', values: Object.fromEntries((products || []).map(p => [String(p.id), `$${p.price}`])) }],
+                product_summaries: (products || []).map(p => ({ id: p.id, pros: ['Good fit for most kitchens'], cons: [], best_for: 'Everyday use' })),
+                recommendation: 'Pick the one that best matches your budget and style.',
+            };
+        }
+
+        return res.json({ products, ...result });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /ai/bundle-build
+// Body: { cart_items: [...] } OR { product_ids: [...] }
+router.post('/bundle-build', async (req, res) => {
+    try {
+        const { cart_items, product_ids, device_id } = req.body || {};
+        const items = normalizeCartItems(cart_items);
+        const ids = Array.isArray(product_ids) ? product_ids.filter(Boolean) : [];
+
+        let seedProducts = [];
+        if (items.length) {
+            const seedIds = [...new Set(items.map(i => i.product_id).filter(Boolean))];
+            const { data } = await supabase.from('products').select('*').in('id', seedIds.slice(0, 10));
+            seedProducts = data || [];
+        } else if (ids.length) {
+            const { data } = await supabase.from('products').select('*').in('id', ids.slice(0, 10));
+            seedProducts = data || [];
+        } else {
+            return res.status(400).json({ error: 'cart_items or product_ids required' });
+        }
+        seedProducts.forEach(fixImageUrl);
+
+        const seedTags = seedProducts.flatMap(p => Array.isArray(p.tags) ? p.tags : []).map(t => String(t).toLowerCase());
+        const seedCats = seedProducts.map(p => p.category).filter(Boolean);
+        const query = [...new Set([...seedTags.slice(0, 6), ...seedCats.slice(0, 2)])].join(' ').trim() || 'kitchen essentials';
+
+        const suggestions = await pipelineSearch(query, device_id, 20);
+
+        // Simple bundling: pick top add-ons in different categories
+        const seen = new Set(seedProducts.map(p => p.id));
+        const addOns = (suggestions || []).filter(p => !seen.has(p.id)).slice(0, 8);
+        const bundles = [
+            {
+                title: 'Complete Your Set',
+                reasoning: 'These pair naturally with what you already have in your cart.',
+                items: addOns,
+            }
+        ];
+
+        return res.json({ seed: seedProducts, bundles });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /ai/chat-session
+// Body: { device_id, session_id?, system?, messages:[{role,content}], max_tokens? }
+router.post('/chat-session', async (req, res) => {
+    try {
+        const { device_id, session_id, system, messages, max_tokens } = req.body || {};
+        if (!device_id) return res.status(400).json({ error: 'device_id required' });
+        if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ error: 'messages required' });
+
+        const sid = session_id || safeUuid();
+        if (!process.env.GEMINI_API_KEY) return res.status(501).json({ error: 'GEMINI_API_KEY not set for chat-session' });
+
+        const contents = messages.map((m) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: String(m.content || '') }]
+        }));
+
+        const response = await ai.models.generateContent({
+            model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+            systemInstruction: system || 'You are a helpful shopping assistant.',
+            contents,
+            generationConfig: { maxOutputTokens: Number(max_tokens || 800), temperature: 0.7 }
+        });
+
+        const assistantText = response.text();
+
+        // Persist (best-effort)
+        try {
+            await supabase.from('ai_conversation_history').insert([{
+                device_id,
+                session_id: sid,
+                role: 'assistant',
+                content: assistantText,
+                created_at: nowIso(),
+            }]);
+        } catch (_) {}
+
+        return res.json({ session_id: sid, content: [{ text: assistantText }] });
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing ai_conversation_history table. Ensure migrations ran.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /ai/chat-history?device_id=...&session_id=...
+router.get('/chat-history', async (req, res) => {
+    try {
+        const device_id = String(req.query.device_id || '').trim();
+        const session_id = String(req.query.session_id || '').trim();
+        if (!device_id || !session_id) return res.status(400).json({ error: 'device_id and session_id required' });
+
+        const { data, error } = await supabase
+            .from('ai_conversation_history')
+            .select('role, content, created_at')
+            .eq('device_id', device_id)
+            .eq('session_id', session_id)
+            .order('created_at', { ascending: true })
+            .limit(200);
+        if (error) throw error;
+        return res.json({ device_id, session_id, messages: data || [] });
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing ai_conversation_history table. Ensure migrations ran.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// DELETE /ai/chat-history
+// Body: { device_id, session_id }
+router.delete('/chat-history', async (req, res) => {
+    try {
+        const { device_id, session_id } = req.body || {};
+        if (!device_id || !session_id) return res.status(400).json({ error: 'device_id and session_id required' });
+
+        const { error } = await supabase
+            .from('ai_conversation_history')
+            .delete()
+            .eq('device_id', device_id)
+            .eq('session_id', session_id);
+        if (error) throw error;
+        return res.json({ success: true });
+    } catch (e) {
+        if (missingTable(e)) return res.status(501).json({ error: 'Missing ai_conversation_history table. Ensure migrations ran.' });
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /ai/aesthetic-suggest
+// Body: { base64_image, device_id?, desired_items?, budget? }
+router.post('/aesthetic-suggest', async (req, res) => {
+    try {
+        const { base64_image, device_id, desired_items, budget } = req.body || {};
+        if (!base64_image) return res.status(400).json({ error: 'base64_image required' });
+        if (!process.env.GEMINI_API_KEY) return res.status(501).json({ error: 'GEMINI_API_KEY not set for aesthetic-suggest' });
+
+        const rawImage = String(base64_image);
+        const marker = 'base64,';
+        const idx = rawImage.indexOf(marker);
+        const imageData = idx >= 0 ? rawImage.slice(idx + marker.length) : rawImage;
+
+        const parts = [
+            { text: `Analyze the image aesthetics (colors/materials/finish/mood) and suggest search keywords for a premium home & kitchen store. Return ONLY valid JSON: {"palette_hex":["#..."],"materials":[],"finish_keywords":[],"mood_keywords":[],"categories":[],"desired_items":"...","queries":["..."]}. desired_items=${desired_items || 'cutlery flatware dinnerware'} budget=${budget || ''}` },
+            { inlineData: { mimeType: 'image/jpeg', data: imageData } }
+        ];
+
+        const aiResult = await askGeminiParts(parts);
+        const queries = Array.isArray(aiResult?.queries) ? aiResult.queries : [];
+        const q = queries[0] || `${(aiResult?.materials || []).slice(0, 2).join(' ')} ${(aiResult?.finish_keywords || []).slice(0, 2).join(' ')} ${(desired_items || 'dinnerware')}`.trim();
+
+        const suggestions = await pipelineSearch(q, device_id, 24);
+        const b = budget != null ? Number(budget) : null;
+        const filtered = (b && Number.isFinite(b) && b > 0) ? suggestions.filter(p => Number(p.price || 0) <= b * 1.25) : suggestions;
+
+        return res.json({
+            profile: aiResult || {},
+            suggestions: filtered.slice(0, 24),
+            suggested_next_searches: queries.slice(0, 3)
+        });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 module.exports = router;
