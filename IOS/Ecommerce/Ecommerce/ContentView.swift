@@ -24,11 +24,11 @@ struct ContentView: View {
                     .tag(0)
                 
                 NavigationStack {
-                    CartView()
+                    BagView()
                 }
                 .tabItem {
-                    Image(systemName: "cart.fill")
-                    Text("Cart")
+                    Image(systemName: "bag.fill")
+                    Text("Bag")
                 }
                 .badge(cartManager.items.count)
                 .tag(1)

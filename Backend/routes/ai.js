@@ -798,6 +798,25 @@ router.post('/cart-coach', async (req, res) => {
         const { cart_items } = req.body || {};
         if (!Array.isArray(cart_items)) return res.status(400).json({ error: 'cart_items array required' });
 
+        // Compute a few deterministic commerce metrics for the client UI.
+        const subtotal = (cart_items || []).reduce((sum, it) => {
+            const price = Number(it.price || 0);
+            const qty = Number(it.quantity || 1) || 1;
+            return sum + price * qty;
+        }, 0);
+
+        // Simple AOV tiers (used by BagIntelligenceView progress UI).
+        const tiers = [
+            { label: 'Free Shipping', threshold: 200 },
+            { label: 'Free Express Upgrade', threshold: 300 },
+            { label: 'VIP Perks', threshold: 500 },
+        ];
+        const nextTier = tiers.find(t => subtotal < t.threshold) || null;
+        const nextTierRemaining = nextTier ? Math.max(0, nextTier.threshold - subtotal) : 0;
+        const tierProgressPct = nextTier
+            ? Math.max(0, Math.min(100, Math.round((subtotal / nextTier.threshold) * 100)))
+            : 100;
+
         const prompt = `
 You are a premium home & kitchen shopping coach analyzing a customer's cart.
 Cart contents: ${JSON.stringify(cart_items)}
@@ -814,7 +833,15 @@ Return ONLY valid JSON:
                 top_suggestion: 'Add a best-selling utensil set to round out your cart.'
             };
         }
-        return res.json(analysis);
+        const bannerInsight = (analysis.insights && analysis.insights[0] && analysis.insights[0].message) ? analysis.insights[0].message : analysis.top_suggestion;
+
+        return res.json({
+            ...analysis,
+            subtotal,
+            progress_percentage: tierProgressPct,
+            next_tier: nextTier ? { label: nextTier.label, threshold: nextTier.threshold, remaining: nextTierRemaining } : null,
+            banner_insight: bannerInsight,
+        });
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }

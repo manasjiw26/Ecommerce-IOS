@@ -12,6 +12,21 @@ struct BundleBuildResponse: Codable {
     let bundles: [CartBundle]
 }
 
+struct ThemeBundleResponse: Codable {
+    let bundleName: String
+    let theme: String
+    let budget: Double?
+    let totalPrice: Double?
+    let products: [Product]
+
+    enum CodingKeys: String, CodingKey {
+        case bundleName = "bundle_name"
+        case theme, budget
+        case totalPrice = "total_price"
+        case products
+    }
+}
+
 struct ResurfaceItem: Codable, Identifiable {
     var id: String { "\(productId)" }
     let productId: Int
@@ -48,11 +63,26 @@ struct CartCoachResponse: Codable {
     let headline: String
     let insights: [CartCoachInsight]
     let topSuggestion: String
+    let subtotal: Double?
+    let progressPercentage: Int?
+    let bannerInsight: String?
+    let nextTier: NextTier?
 
     enum CodingKeys: String, CodingKey {
         case score, headline, insights
         case topSuggestion = "top_suggestion"
+        case subtotal
+        case progressPercentage = "progress_percentage"
+        case bannerInsight = "banner_insight"
+        case nextTier = "next_tier"
     }
+}
+
+struct NextTier: Codable {
+    let label: String
+    let threshold: Double
+    let remaining: Double
+}
 }
 
 final class CartIntelligenceService {
@@ -88,6 +118,29 @@ final class CartIntelligenceService {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(BundleBuildResponse.self, from: data)
+    }
+
+    // Theme bundle: { active_item_ids, theme, budget, device_id } -> { bundle_name, products, ... }
+    func bundleBuild(theme: String, budget: Double?, activeItemIds: [Int], deviceId: String) async throws -> ThemeBundleResponse {
+        guard let url = URL(string: "\(baseURL)/bundle-build") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = [
+            "device_id": deviceId,
+            "theme": theme,
+            "active_item_ids": activeItemIds,
+            "product_ids": activeItemIds
+        ]
+        if let budget { body["budget"] = budget }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(ThemeBundleResponse.self, from: data)
     }
 
     func resurface(deviceId: String) async throws -> ResurfaceResponse {
@@ -126,4 +179,3 @@ final class CartIntelligenceService {
         return try JSONDecoder().decode(CartCoachResponse.self, from: data)
     }
 }
-
