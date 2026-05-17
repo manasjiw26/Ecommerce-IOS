@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class CartIntelligenceViewModel: ObservableObject {
@@ -46,4 +47,3 @@ final class CartIntelligenceViewModel: ObservableObject {
         }
     }
 }
-
