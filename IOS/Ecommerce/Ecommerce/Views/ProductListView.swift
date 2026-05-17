@@ -276,21 +276,20 @@ struct ProductListView: View {
             .sheet(isPresented: $showFilters) {
                 SearchFilterSheet(viewModel: searchViewModel)
             }
-            .confirmationDialog("Visual Search", isPresented: $visualVM.showSourceDialog, titleVisibility: .visible) {
-                Button("Search Object") { 
-                    visualVM.searchMode = .object
-                    showSourceTypeDialog = true 
+            .sheet(isPresented: $visualVM.showSourceDialog) {
+                VisualSearchModeSheet { mode in
+                    visualVM.searchMode = mode
+                    visualVM.showSourceDialog = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        showSourceTypeDialog = true
+                    }
                 }
-                Button("Search Aesthetic") { 
-                    visualVM.searchMode = .aesthetic
-                    showSourceTypeDialog = true 
-                }
-                Button("Cancel", role: .cancel) {}
             }
-            .confirmationDialog("Choose Image Source", isPresented: $showSourceTypeDialog, titleVisibility: .visible) {
-                Button("Camera") { visualVM.showCamera = true }
-                Button("Photo Library") { visualVM.showPhotoLibrary = true }
-                Button("Cancel", role: .cancel) {}
+            .sheet(isPresented: $showSourceTypeDialog) {
+                VisualSearchSourceSheet(
+                    onCamera:  { visualVM.showCamera       = true },
+                    onLibrary: { visualVM.showPhotoLibrary = true }
+                )
             }
             .sheet(isPresented: $visualVM.showCamera) {
                 CameraPickerRepresentable(selectedImage: $visualVM.capturedImage) {
@@ -399,6 +398,187 @@ struct CategoryChip: View {
                 .clipShape(Capsule())
                 .shadow(color: .black.opacity(isSelected ? 0 : 0.06), radius: 4, x: 0, y: 2)
         }
+    }
+}
+
+// MARK: — Visual Search Mode Sheet
+
+struct VisualSearchModeSheet: View {
+    let onSelect: (VisualSearchViewModel.SearchMode) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Visual Search")
+                    .font(.system(size: 20, weight: .bold, design: .default))
+                    .foregroundStyle(.primary)
+                Text("How would you like to search?")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Cards
+            VStack(spacing: 10) {
+                VisualSearchModeCard(
+                    icon: "viewfinder.circle.fill",
+                    iconBackground: .black,
+                    iconColor: .white,
+                    title: "Search Object",
+                    subtitle: "Find a specific item by photo",
+                    action: { onSelect(.object) }
+                )
+                VisualSearchModeCard(
+                    icon: "sparkles",
+                    iconBackground: Color(.systemIndigo).opacity(0.12),
+                    iconColor: Color(.systemIndigo),
+                    title: "Search Aesthetic",
+                    subtitle: "Match a room's mood & palette",
+                    action: { onSelect(.aesthetic) }
+                )
+            }
+
+            // Footer note
+            HStack(spacing: 4) {
+                Image(systemName: "camera.fill")
+                Text("Camera access required")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .presentationDetents([.height(320)])
+        .presentationCornerRadius(28)
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color(.systemBackground))
+    }
+}
+
+// MARK: — Visual Search Mode Card
+
+struct VisualSearchModeCard: View {
+    let icon: String
+    let iconBackground: Color
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    let action: () -> Void
+
+    @State private var isPressed = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                // Icon tile
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(iconBackground)
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        Image(systemName: icon)
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(iconColor)
+                    )
+
+                // Labels
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.secondarySystemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(Color(.separator), lineWidth: 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isPressed ? 0.97 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
+        ._onButtonGesture(pressing: { isPressed = $0 }, perform: {})
+    }
+}
+
+// MARK: — Visual Search Source Sheet (Camera vs Library)
+
+struct VisualSearchSourceSheet: View {
+    let onCamera:  () -> Void
+    let onLibrary: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Choose Source")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.primary)
+                Text("Where is your photo?")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Cards
+            VStack(spacing: 10) {
+                VisualSearchModeCard(
+                    icon: "camera.fill",
+                    iconBackground: Color(.systemGreen).opacity(0.12),
+                    iconColor: Color(.systemGreen),
+                    title: "Take a Photo",
+                    subtitle: "Use your camera right now",
+                    action: {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onCamera() }
+                    }
+                )
+                VisualSearchModeCard(
+                    icon: "photo.on.rectangle.angled",
+                    iconBackground: Color(.systemBlue).opacity(0.12),
+                    iconColor: Color(.systemBlue),
+                    title: "Photo Library",
+                    subtitle: "Pick from your saved photos",
+                    action: {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onLibrary() }
+                    }
+                )
+            }
+
+            // Footer
+            HStack(spacing: 4) {
+                Image(systemName: "lock.fill")
+                Text("Photos stay on your device")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .presentationDetents([.height(300)])
+        .presentationCornerRadius(28)
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color(.systemBackground))
     }
 }
 
