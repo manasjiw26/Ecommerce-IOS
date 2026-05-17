@@ -27,7 +27,9 @@ class VisualSearchService {
         deviceId: String,
         visionLabels: [(label: String, confidence: Float)],
         topLabel: String,
-        image: UIImage
+        image: UIImage,
+        mode: String,
+        dominantColors: [String] = []
     ) async throws -> VisualSearchResponse {
 
         guard let url = URL(string: "\(baseURL)/ai/visual-search") else {
@@ -49,10 +51,12 @@ class VisualSearchService {
             .base64EncodedString() ?? ""
 
         let body: [String: Any] = [
-            "device_id":     deviceId,
-            "vision_labels": labelsPayload,
-            "top_label":     topLabel,
-            "base64_image":  base64Image   // ← CLIP will use this for image similarity
+            "device_id":      deviceId,
+            "vision_labels":  labelsPayload,
+            "top_label":      topLabel,
+            "base64_image":   base64Image,   // ← CLIP will use this for image similarity
+            "mode":           mode,
+            "dominant_colors": dominantColors  // ← feeds backend hard color gate (aesthetic mode)
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
