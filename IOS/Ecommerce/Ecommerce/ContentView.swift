@@ -9,9 +9,12 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var selectedTab = 0
+    @State private var lastAllowedTab = 0
     @State private var showChat = false
     @State private var chatPulse = false
+    @State private var showRegistryAuthAlert = false
     @EnvironmentObject var cartManager: CartManager
+    @EnvironmentObject var authSession: AuthSession
     
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -51,6 +54,15 @@ struct ContentView: View {
                     .tag(3)
             }
             .tint(.primary)
+            .onChange(of: selectedTab) { newValue in
+                // Registry requires an authenticated user; block the tab for anonymous sessions.
+                if newValue == 3 && authSession.currentUser == nil {
+                    showRegistryAuthAlert = true
+                    selectedTab = lastAllowedTab
+                } else {
+                    lastAllowedTab = newValue
+                }
+            }
             
             // Floating chat button
             VStack {
@@ -93,9 +105,20 @@ struct ContentView: View {
         .sheet(isPresented: $showChat) {
             ChatView()
         }
+        .alert("Sign in required", isPresented: $showRegistryAuthAlert) {
+            Button("Sign In / Sign Up") {
+                NotificationCenter.default.post(name: .requireAuth, object: nil)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Please sign in to access and manage registries.")
+        }
         .task {
             await OrderManager.shared.fetchOrders()
             chatPulse = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openRegistryToken)) { _ in
+            selectedTab = 3
         }
     }
 }

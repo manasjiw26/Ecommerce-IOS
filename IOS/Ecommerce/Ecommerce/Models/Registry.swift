@@ -36,6 +36,9 @@ struct RegistryItem: Codable, Identifiable {
     var isGroupGift: Bool?
     let products: Product?
     let aiReason: String?
+    let totalContributed: Double?
+    let isFullyFunded: Bool?
+    let contributions: [RegistryContribution]?
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -48,6 +51,9 @@ struct RegistryItem: Codable, Identifiable {
         case products = "products"
         case product = "product"
         case aiReason = "ai_reason"
+        case totalContributed = "total_contributed"
+        case isFullyFunded = "is_fully_funded"
+        case contributions
     }
     
     init(from decoder: Decoder) throws {
@@ -60,6 +66,9 @@ struct RegistryItem: Codable, Identifiable {
         isMostWanted = try container.decode(Bool.self, forKey: .isMostWanted)
         isGroupGift = try container.decodeIfPresent(Bool.self, forKey: .isGroupGift)
         aiReason = try container.decodeIfPresent(String.self, forKey: .aiReason)
+        totalContributed = try container.decodeIfPresent(Double.self, forKey: .totalContributed)
+        isFullyFunded = try container.decodeIfPresent(Bool.self, forKey: .isFullyFunded)
+        contributions = try container.decodeIfPresent([RegistryContribution].self, forKey: .contributions)
         
         // Dynamically resolve Singular ("product") or Plural ("products") key from JSON response
         if container.contains(.products) {
@@ -82,6 +91,31 @@ struct RegistryItem: Codable, Identifiable {
         try container.encodeIfPresent(isGroupGift, forKey: .isGroupGift)
         try container.encodeIfPresent(products, forKey: .products)
         try container.encodeIfPresent(aiReason, forKey: .aiReason)
+        try container.encodeIfPresent(totalContributed, forKey: .totalContributed)
+        try container.encodeIfPresent(isFullyFunded, forKey: .isFullyFunded)
+        try container.encodeIfPresent(contributions, forKey: .contributions)
+    }
+}
+
+struct RegistryContribution: Codable, Identifiable {
+    let id: String
+    let registryItemId: String
+    let contributorName: String
+    let amount: Double
+    let message: String?
+    let createdAt: String?
+    let isAnonymous: Bool?
+    let email: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case registryItemId = "registry_item_id"
+        case contributorName = "contributor_name"
+        case amount
+        case message
+        case createdAt = "created_at"
+        case isAnonymous = "is_anonymous"
+        case email
     }
 }
 

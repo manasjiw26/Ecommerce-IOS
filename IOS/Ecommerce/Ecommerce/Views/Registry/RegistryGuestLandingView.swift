@@ -9,6 +9,9 @@ struct RegistryGuestLandingView: View {
     @State private var isGroupContribution = false
     @State private var items: [RegistryItem] = []
     @State private var selectedProductForDetail: Product? = nil
+    @State private var isLoadingItems = false
+    @State private var loadingMessage = "Loading gifts..."
+    @State private var loadError: String? = nil
     
     // Filtering States
     @State private var selectedCollection = "All"
@@ -103,9 +106,9 @@ struct RegistryGuestLandingView: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.black)
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
+                                .padding(.vertical, 4)
                                 .background(Color.white)
-                                .cornerRadius(3)
+                                .clipShape(Capsule())
                         }
                         
                         Text(registry.name)
@@ -156,8 +159,8 @@ struct RegistryGuestLandingView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
-                    .cornerRadius(12)
-                    .padding(.horizontal, 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.horizontal, 16)
                 }
                 .buttonStyle(.plain)
                 
@@ -165,41 +168,40 @@ struct RegistryGuestLandingView: View {
                 let fulfilledCount = items.filter { $0.quantityReceived >= $0.quantityRequested && $0.quantityRequested > 0 }.count
                 let remainingCount = items.filter { $0.quantityReceived < $0.quantityRequested || $0.quantityRequested == 0 }.count
                 
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("WISHES FULFILLED")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
-                            .kerning(1.2)
+                            .kerning(1)
                         Text("\(fulfilledCount)")
-                            .font(.system(size: 28, weight: .thin, design: .serif))
+                            .font(.system(size: 32, weight: .light, design: .rounded))
                             .foregroundColor(.primary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     
                     Rectangle()
-                        .fill(Color.primary.opacity(0.1))
-                        .frame(width: 1, height: 40)
-                        .padding(.horizontal, 16)
+                        .fill(Color(.separator))
+                        .frame(width: 0.5, height: 44)
                     
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("GIFTS REMAINING")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
-                            .kerning(1.2)
+                            .kerning(1)
                         Text("\(remainingCount)")
-                            .font(.system(size: 28, weight: .thin, design: .serif))
+                            .font(.system(size: 32, weight: .light, design: .rounded))
                             .foregroundColor(.primary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 24)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
                 .padding(.horizontal, 20)
+                .padding(.vertical, 18)
+                .background(Color(UIColor.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+                .padding(.horizontal, 16)
                 
                 // MARK: - Dropdown Filter & Collections
                 VStack(alignment: .leading, spacing: 16) {
@@ -250,9 +252,10 @@ struct RegistryGuestLandingView: View {
                                         .fontWeight(.bold)
                                         .foregroundColor(selectedCollection == collection ? .white : .primary)
                                         .padding(.vertical, 8)
-                                        .padding(.horizontal, 14)
-                                        .background(selectedCollection == collection ? Color.black : Color(UIColor.systemGray6))
-                                        .cornerRadius(20)
+                                        .padding(.horizontal, 16)
+                                        .background(selectedCollection == collection ? Color.black : Color(UIColor.systemBackground))
+                                        .clipShape(Capsule())
+                                        .shadow(color: .black.opacity(selectedCollection == collection ? 0 : 0.05), radius: 4, x: 0, y: 1)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -272,7 +275,30 @@ struct RegistryGuestLandingView: View {
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 20)
                     
-                    if standardItems.isEmpty && surpriseItems.isEmpty {
+                    if isLoadingItems && items.isEmpty {
+                        RegistryInlineLoadingView(message: loadingMessage)
+                    } else if let loadError, items.isEmpty {
+                        VStack(spacing: 10) {
+                            Text(loadError)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+
+                            Button("Retry") {
+                                Task { await loadRegistryItems(useCache: false, message: "Loading gifts...") }
+                            }
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 14)
+                            .background(Color.black)
+                            .cornerRadius(6)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 32)
+                    } else if standardItems.isEmpty && surpriseItems.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "giftcard")
                                 .font(.largeTitle)
@@ -333,13 +359,13 @@ struct RegistryGuestLandingView: View {
             }
             .padding(.bottom, 24)
         }
-        .onAppear {
-            Task {
-                try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                await MainActor.run {
-                    items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                }
+        .overlay {
+            if isLoadingItems && !items.isEmpty {
+                RegistryLoadingOverlay(message: loadingMessage)
             }
+        }
+        .onAppear {
+            Task { await loadRegistryItems(useCache: true, message: "Loading gifts...") }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -359,10 +385,7 @@ struct RegistryGuestLandingView: View {
                     isGroupContribution: isGroupContribution
                 ) {
                     Task {
-                        try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                        await MainActor.run {
-                            items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                        }
+                        await loadRegistryItems(useCache: false, message: "Updating gift status...")
                     }
                 }
             }
@@ -370,20 +393,40 @@ struct RegistryGuestLandingView: View {
         .sheet(isPresented: $showingSurpriseSelector) {
             GuestSurpriseGiftSelectorView(registryId: registry.id) { selectedProduct in
                 Task {
+                    await MainActor.run {
+                        loadingMessage = "Adding surprise gift..."
+                        isLoadingItems = true
+                    }
                     MockRegistryService.shared.addAlternativeGift(registryId: registry.id, product: selectedProduct)
                     try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s for db insert
-                    try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                    await MainActor.run {
-                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                    }
+                    await loadRegistryItems(useCache: false, message: "Refreshing gifts...")
                 }
             }
         }
         .sheet(item: $selectedProductForDetail) { product in
             NavigationStack {
-                ProductDetailView(product: product)
+                ProductDetailView(product: product, showCloseButton: true)
             }
         }
+    }
+
+    @MainActor
+    private func loadRegistryItems(useCache: Bool, message: String) async {
+        if useCache, let cached = MockRegistryService.shared.registryItems[registry.id], !cached.isEmpty {
+            items = cached
+            return
+        }
+
+        loadingMessage = message
+        isLoadingItems = true
+        loadError = nil
+        do {
+            try await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
+            items = MockRegistryService.shared.registryItems[registry.id] ?? []
+        } catch {
+            loadError = "Could not load this registry. Please try again."
+        }
+        isLoadingItems = false
     }
 }
 
@@ -414,10 +457,30 @@ struct GuestSurpriseGiftSelectorView: View {
                 .padding(.top, 16)
                 
                 if productViewModel.isLoading {
-                    ProgressView().padding(.top, 40)
+                    RegistryInlineLoadingView(message: "Loading products...")
+                } else if let errorMessage = productViewModel.errorMessage, productViewModel.products.isEmpty {
+                    VStack(spacing: 10) {
+                        Text(errorMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button("Retry") {
+                            Task { await productViewModel.fetchProducts() }
+                        }
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .background(Color.black)
+                        .cornerRadius(6)
+                    }
+                    .padding(.top, 40)
+                    .padding(.horizontal, 20)
                 } else {
                     List {
-                        let initialProducts = searchQuery.isEmpty ? RecommendationEngine.shared.recommendedProducts : productViewModel.products
+                        let initialProducts = productViewModel.products.isEmpty ? RecommendationEngine.shared.recommendedProducts : productViewModel.products
                         let filtered = initialProducts.filter {
                             searchQuery.isEmpty ? true : $0.name.localizedCaseInsensitiveContains(searchQuery) || ($0.category ?? "").localizedCaseInsensitiveContains(searchQuery)
                         }
@@ -497,7 +560,9 @@ struct GuestProductCard: View {
     let onContributeTap: () -> Void
     
     var isFullyGifted: Bool {
-        item.quantityReceived >= item.quantityRequested && item.quantityRequested > 0
+        let qtyFullyGifted = item.quantityReceived >= item.quantityRequested && item.quantityRequested > 0
+        let contributionFullyFunded = (item.isFullyFunded ?? false)
+        return qtyFullyGifted || contributionFullyFunded
     }
     
     var isGroupGift: Bool {
@@ -505,19 +570,14 @@ struct GuestProductCard: View {
         return item.isGroupGift ?? (product.price >= 150.0)
     }
     
-    // Mock contribution progress (e.g. deterministic based on product ID)
-    var contributionProgress: Double {
-        return Double((item.productId * 7) % 75) / 100.0
-    }
-    
     var contributedAmount: Double {
-        guard let product = item.products else { return 0 }
-        return product.price * contributionProgress
+        return item.totalContributed ?? 0
     }
     
     var remainingAmount: Double {
         guard let product = item.products else { return 0 }
-        return product.price - contributedAmount
+        let target = product.price * Double(max(1, item.quantityRequested))
+        return max(0, target - contributedAmount)
     }
     
     var body: some View {
@@ -531,8 +591,7 @@ struct GuestProductCard: View {
                             Rectangle().fill(Color.gray.opacity(0.1))
                         }
                         .frame(width: 90, height: 90)
-                        .cornerRadius(8)
-                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .opacity(isFullyGifted ? 0.4 : 1.0)
                         
                         VStack(alignment: .leading, spacing: 6) {
@@ -541,29 +600,29 @@ struct GuestProductCard: View {
                                     Text("FULLY GIFTED")
                                         .font(.system(size: 8, weight: .bold))
                                         .foregroundColor(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
                                         .background(Color.gray)
-                                        .cornerRadius(2)
+                                        .clipShape(Capsule())
                                 } else {
                                     if item.isMostWanted {
                                         Text("MOST WANTED")
                                             .font(.system(size: 8, weight: .bold))
                                             .foregroundColor(.white)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
                                             .background(Color.black)
-                                            .cornerRadius(2)
+                                            .clipShape(Capsule())
                                     }
                                     
                                     if isGroupGift {
                                         Text("GROUP GIFT")
                                             .font(.system(size: 8, weight: .bold))
                                             .foregroundColor(.white)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
                                             .background(Color.black.opacity(0.6))
-                                            .cornerRadius(2)
+                                            .clipShape(Capsule())
                                     }
                                 }
                                 
@@ -611,11 +670,12 @@ struct GuestProductCard: View {
                 
                 // Group Gifting Typographic Text (No progress bars!)
                 if isGroupGift && item.quantityRequested > 0 && !isFullyGifted {
+                    let targetAmount = product.price * Double(max(1, item.quantityRequested))
                     HStack {
                         Image(systemName: "square.and.pencil")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        Text("WISH CONTRIBUTION: $\(Int(contributedAmount)) of $\(Int(product.price)) funded  •  $\(Int(remainingAmount)) remaining")
+                        Text("WISH CONTRIBUTION: $\(Int(contributedAmount)) of $\(Int(targetAmount)) funded  •  $\(Int(remainingAmount)) remaining")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(.secondary)
                     }
@@ -642,8 +702,8 @@ struct GuestProductCard: View {
                                     .foregroundColor(.white)
                                     .padding(.vertical, 8)
                                     .frame(maxWidth: .infinity)
-                                    .background(Color.black.opacity(0.8))
-                                    .cornerRadius(6)
+                            .background(Color.black.opacity(0.8))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             }
                             .buttonStyle(.plain)
                         }
@@ -656,9 +716,9 @@ struct GuestProductCard: View {
                                 .padding(.vertical, 8)
                                 .frame(maxWidth: .infinity)
                                 .background(isGroupGift ? Color(UIColor.systemGray6) : Color.black)
-                                .cornerRadius(6)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                                         .stroke(Color.primary.opacity(isGroupGift ? 0.1 : 0), lineWidth: 1)
                                 )
                         }
@@ -707,25 +767,35 @@ struct GuestCheckoutSheet: View {
                         onPaymentSuccess: { pid in
                             Task {
                                 do {
+                                    let guestFullName = giftAnonymously ? "Anonymous Guest" : (guestName.isEmpty ? "Guest" : guestName)
+                                    let msg = personalMessage.isEmpty ? nil : personalMessage
+
                                     if isGroupContribution {
                                         _ = try await RegistryService.shared.contributeToGroupGift(
                                             registryId: registry.id,
                                             itemId: item.id,
-                                            contributorName: giftAnonymously ? "Anonymous Guest" : (guestName.isEmpty ? "Guest" : guestName),
+                                            contributorName: guestFullName,
                                             amount: finalAmount,
-                                            message: personalMessage.isEmpty ? nil : personalMessage
-                                        )
-                                    } else if item.quantityRequested == 0 {
-                                        _ = try await RegistryService.shared.addAlternativeGift(
-                                            registryId: registry.id,
-                                            productId: item.productId
+                                            message: msg
                                         )
                                     } else {
-                                        _ = try await RegistryService.shared.updateRegistryItem(
+                                        // Full purchase of standard or surprise gift:
+                                        // 1. Log the contribution (so owner sees who bought it)
+                                        _ = try await RegistryService.shared.contributeToGroupGift(
                                             registryId: registry.id,
                                             itemId: item.id,
-                                            updates: ["quantity_received": item.quantityReceived + 1]
+                                            contributorName: guestFullName,
+                                            amount: finalAmount,
+                                            message: msg
                                         )
+                                        // 2. Increment quantity received (only if it's a requested item)
+                                        if item.quantityRequested > 0 {
+                                            _ = try await RegistryService.shared.updateRegistryItem(
+                                                registryId: registry.id,
+                                                itemId: item.id,
+                                                updates: ["quantity_received": item.quantityReceived + 1]
+                                            )
+                                        }
                                     }
                                     
                                     try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)

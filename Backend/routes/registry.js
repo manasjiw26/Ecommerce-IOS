@@ -100,6 +100,12 @@ router.get('/starter-bundles', async (req, res) => {
         // Fetch real products from catalog to construct bundles dynamically!
         const { data: products, error } = await supabase.from('products').select('*');
         if (error) return res.status(500).json({ error: error.message });
+        const catalog = products || [];
+
+        const withFallback = (primary) => {
+            if (primary.length) return primary;
+            return catalog.slice(0, 3);
+        };
 
         // Let's group products dynamically into gorgeous starter bundles
         // depending on the event type!
@@ -107,15 +113,15 @@ router.get('/starter-bundles', async (req, res) => {
         let bundles = [];
 
         if (type.includes('sangeet') || type.includes('diwali')) {
-            const platterProducts = products.filter(p => {
+            const platterProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('platter') || name.includes('spoon') || name.includes('bowl') || name.includes('serve') || name.includes('brass');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
-            const diningProducts = products.filter(p => {
+            const diningProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('plate') || name.includes('glass') || name.includes('cup') || name.includes('dining');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
             bundles = [
                 {
@@ -134,16 +140,16 @@ router.get('/starter-bundles', async (req, res) => {
                 }
             ];
         } else if (type.includes('wedding') || type.includes('engagement') || type.includes('gala')) {
-            const cookwareProducts = products.filter(p => {
+            const cookwareProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 const cat = (p.category || '').toLowerCase();
                 return name.includes('pan') || name.includes('pot') || name.includes('oven') || cat.includes('cook') || name.includes('staub');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
-            const glassProducts = products.filter(p => {
+            const glassProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('glass') || name.includes('wine') || name.includes('champagne') || name.includes('dorset');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
             bundles = [
                 {
@@ -162,15 +168,15 @@ router.get('/starter-bundles', async (req, res) => {
                 }
             ];
         } else if (type.includes('housewarming')) {
-            const nestProducts = products.filter(p => {
+            const nestProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('mug') || name.includes('linen') || name.includes('wood') || name.includes('candle') || name.includes('apilco');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
-            const barProducts = products.filter(p => {
+            const barProducts = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('bar') || name.includes('shaker') || name.includes('cocktail') || name.includes('corkscrew') || name.includes('martini');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
             bundles = [
                 {
@@ -190,15 +196,15 @@ router.get('/starter-bundles', async (req, res) => {
             ];
         } else {
             // Default Fallback Bundles
-            const defaultProducts1 = products.filter(p => {
+            const defaultProducts1 = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('martini') || name.includes('glass') || name.includes('shaker');
-            }).slice(0, 3);
+            }).slice(0, 3));
             
-            const defaultProducts2 = products.filter(p => {
+            const defaultProducts2 = withFallback(catalog.filter(p => {
                 const name = p.name.toLowerCase();
                 return name.includes('spoon') || name.includes('dutch') || name.includes('pan');
-            }).slice(0, 3);
+            }).slice(0, 3));
 
             bundles = [
                 {
@@ -222,6 +228,32 @@ router.get('/starter-bundles', async (req, res) => {
     } catch (e) {
         console.error('[GET /registry/starter-bundles]:', e.message);
         return res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /registry/search?name=Emma
+// NOTE: keep this before router.get('/:id', ...) so Express doesn't treat "search" as an id.
+router.get('/search', async (req, res) => {
+    try {
+        const { name } = req.query;
+        const q = (name || '').trim();
+        if (!q || q.length < 2) {
+            return res.status(400).json({ error: 'name query must be at least 2 characters', code: 400 });
+        }
+
+        const { data, error } = await supabase
+            .from('registries')
+            .select('id, user_id, event_type, event_date, event_location, theme, share_token, is_public, budget, created_at')
+            .eq('is_public', true)
+            .ilike('theme', `%${q}%`)
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json(data || []);
+    } catch (e) {
+        console.error('[GET /registry/search]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
     }
 });
 
@@ -286,8 +318,9 @@ router.get('/public/:shareToken', async (req, res) => {
             .from('registries')
             .select('id')
             .eq('share_token', shareToken)
-            .single();
+            .maybeSingle();
         if (error) return res.status(500).json({ error: error.message, code: 500 });
+        if (!registry) return res.status(404).json({ error: 'registry not found', code: 404 });
         const dashboard = await buildDashboard(registry.id);
         return res.json(dashboard);
     } catch (e) {
@@ -549,27 +582,39 @@ router.post('/:id/items', async (req, res) => {
     try {
         const { id } = req.params;
         const { product_id, quantity_requested, is_most_wanted, ai_reason } = req.body;
+        const productId = Number(product_id);
+        const quantity = Math.max(0, Number(quantity_requested ?? 1));
+
+        if (!Number.isInteger(productId) || productId <= 0) {
+            return res.status(400).json({ error: 'valid product_id is required', code: 400 });
+        }
 
         const { data: product, error: prodErr } = await supabase
             .from('products')
             .select('id, price')
-            .eq('id', product_id)
-            .single();
+            .eq('id', productId)
+            .maybeSingle();
         if (prodErr) return res.status(500).json({ error: prodErr.message, code: 500 });
+        if (!product) return res.status(404).json({ error: `product ${productId} not found`, code: 404 });
 
         // Safe Check: If item already exists, update the quantity requested instead of crashing on unique constraint
         const { data: existing, error: exErr } = await supabase
             .from('registry_items')
             .select('*')
             .eq('registry_id', id)
-            .eq('product_id', product_id)
+            .eq('product_id', productId)
+            .limit(1)
             .maybeSingle();
+        if (exErr) return res.status(500).json({ error: exErr.message, code: 500 });
 
         if (existing) {
-            const newQty = Number(existing.quantity_requested || 1) + Number(quantity_requested || 1);
+            const newQty = Number(existing.quantity_requested || 0) + quantity;
             const { data: updated, error: updErr } = await supabase
                 .from('registry_items')
-                .update({ quantity_requested: newQty })
+                .update({
+                    quantity_requested: newQty,
+                    ai_reason: ai_reason || existing.ai_reason
+                })
                 .eq('id', existing.id)
                 .select()
                 .single();
@@ -582,8 +627,8 @@ router.post('/:id/items', async (req, res) => {
             .insert([
                 {
                     registry_id: id,
-                    product_id,
-                    quantity_requested,
+                    product_id: productId,
+                    quantity_requested: quantity,
                     is_most_wanted: is_most_wanted || false,
                     price_snapshot: Number(product?.price || 0),
                     ai_reason: ai_reason || null
@@ -662,6 +707,25 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        // Delete children first to avoid FK constraint failures when DB doesn't have ON DELETE CASCADE.
+        const { data: items, error: itemsErr } = await supabase
+            .from('registry_items')
+            .select('id')
+            .eq('registry_id', id);
+        if (itemsErr) return res.status(500).json({ error: itemsErr.message, code: 500 });
+
+        const itemIds = (items || []).map((x) => x.id);
+        if (itemIds.length) {
+            const { error: contribErr } = await supabase.from('registry_contributions').delete().in('registry_item_id', itemIds);
+            if (contribErr) return res.status(500).json({ error: contribErr.message, code: 500 });
+        }
+
+        const { error: collabErr } = await supabase.from('registry_collaborators').delete().eq('registry_id', id);
+        if (collabErr) return res.status(500).json({ error: collabErr.message, code: 500 });
+
+        const { error: itemsDelErr } = await supabase.from('registry_items').delete().eq('registry_id', id);
+        if (itemsDelErr) return res.status(500).json({ error: itemsDelErr.message, code: 500 });
+
         const { error } = await supabase.from('registries').delete().eq('id', id);
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         return res.json({ success: true });

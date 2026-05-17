@@ -1,17 +1,23 @@
 import SwiftUI
 
 struct RegistryLandingView: View {
-    @State private var registries = MockRegistryService.shared.registries
+    @ObservedObject private var service = MockRegistryService.shared
     @State private var showingWizard = false
     @State private var showingSearch = false
-    @State private var joinCodeQuery = ""
+    @State private var isLoadingRegistries = false
+    @State private var isCreatingRegistry = false
+    @State private var loadError: String? = nil
+    @State private var hasFetchedOnce = false
     
     // Callbacks to communicate navigation changes back to Coordinator
     let onSelectRegistry: (MockRegistryExtended) -> Void
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
                 // MARK: - Premium Hero Section
                 ZStack(alignment: .bottomLeading) {
                     CachedImageView(urlString: "https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&w=800&q=80") { img in
@@ -21,7 +27,13 @@ struct RegistryLandingView: View {
                     }
                     .frame(height: 200)
                     .clipped()
-                    .overlay(Color.black.opacity(0.45))
+                    .overlay(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.6), Color.black.opacity(0.15)],
+                            startPoint: .bottom,
+                            endPoint: .top
+                        )
+                    )
                     
                     VStack(alignment: .leading, spacing: 4) {
                         Text("THE GIFT REGISTRY")
@@ -45,14 +57,14 @@ struct RegistryLandingView: View {
                             Image(systemName: "plus")
                                 .font(.system(size: 12, weight: .bold))
                             Text("Create Registry")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: 14, weight: .semibold))
                         }
                         .foregroundColor(.white)
-                        .padding(.vertical, 10)
-                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
                         .frame(maxWidth: .infinity)
                         .background(Color.black)
-                        .cornerRadius(6)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     
@@ -61,79 +73,113 @@ struct RegistryLandingView: View {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 12, weight: .bold))
                             Text("Find Registry")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.system(size: 14, weight: .semibold))
                         }
-                        .foregroundColor(.white)
-                        .padding(.vertical, 10)
-                        .padding(.horizontal, 12)
+                        .foregroundColor(.primary)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
                         .frame(maxWidth: .infinity)
-                        .background(Color.black)
-                        .cornerRadius(6)
+                        .background(Color(UIColor.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
 
-                
-                // MARK: - My Registries
-                let owned = registries.filter { $0.isOwner }
-                if !owned.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("My Registries")
-                            .font(.headline)
+                    if isLoadingRegistries && service.registries.isEmpty {
+                        RegistryInlineLoadingView(message: "Loading registries...")
+                    } else if let loadError, service.registries.isEmpty {
+                        VStack(spacing: 12) {
+                            Text(loadError)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+
+                            Button("Retry") {
+                                Task { await loadRegistries() }
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.vertical, 10)
                             .padding(.horizontal, 20)
-                        
-                        ForEach(owned) { reg in
-                            RegistryCardRow(registry: reg) {
-                                onSelectRegistry(reg)
+                            .background(Color.black)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                    } else {
+                        // MARK: - My Registries
+                        let owned = service.registries.filter { $0.isOwner }
+                        if !owned.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("My Registries")
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+
+                                ForEach(owned) { reg in
+                                    RegistryCardRow(registry: reg) {
+                                        onSelectRegistry(reg)
+                                    }
+                                }
+                            }
+                        }
+
+                        // MARK: - Registries I'm Gifting
+                        let gifting = service.registries.filter { !$0.isOwner }
+                        if !gifting.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Registries I'm Gifting")
+                                    .font(.headline)
+                                    .padding(.horizontal, 16)
+
+                                ForEach(gifting) { reg in
+                                    RegistryCardRow(registry: reg) {
+                                        onSelectRegistry(reg)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                
-                // MARK: - Registries I'm Gifting
-                let gifting = registries.filter { !$0.isOwner }
-                if !gifting.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Registries I'm Gifting")
-                            .font(.headline)
-                            .padding(.horizontal, 20)
-                        
-                        ForEach(gifting) { reg in
-                            RegistryCardRow(registry: reg) {
-                                onSelectRegistry(reg)
-                            }
-                        }
-                    }
-                }
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 24)
+            .refreshable {
+                await loadRegistries()
+            }
+
+            if isCreatingRegistry {
+                RegistryLoadingOverlay(message: "Creating registry...")
+            }
         }
-        .onAppear {
-            // Dynamically refresh lists on screen appearance
-            Task {
-                try? await MockRegistryService.shared.fetchRegistriesFromBackend()
-                await MainActor.run {
-                    registries = MockRegistryService.shared.registries
-                }
+        .task {
+            if !hasFetchedOnce {
+                await loadRegistries()
+                hasFetchedOnce = true
             }
         }
         .sheet(isPresented: $showingWizard) {
             RegistryWizardView { newReg in
                 Task {
                     do {
+                        await MainActor.run { isCreatingRegistry = true }
                         let created = try await MockRegistryService.shared.createRegistry(
                             name: newReg.name,
                             type: newReg.type,
-                            date: newReg.date,
+                            isoDate: newReg.isoDate,
                             location: newReg.location
                         )
                         await MainActor.run {
-                            registries = MockRegistryService.shared.registries
+                            isCreatingRegistry = false
                             onSelectRegistry(created)
                         }
                     } catch {
-                        print("Error creating registry: \(error)")
+                        await MainActor.run {
+                            isCreatingRegistry = false
+                            loadError = error.localizedDescription
+                        }
                     }
                 }
             }
@@ -143,6 +189,18 @@ struct RegistryLandingView: View {
                 onSelectRegistry(selectedReg)
             }
         }
+    }
+
+    @MainActor
+    private func loadRegistries() async {
+        isLoadingRegistries = true
+        loadError = nil
+        do {
+            try await service.fetchRegistriesFromBackend()
+        } catch {
+            loadError = "Could not load registries. Please try again."
+        }
+        isLoadingRegistries = false
     }
 }
 
@@ -154,43 +212,44 @@ struct RegistryCardRow: View {
     
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 CachedImageView(urlString: registry.bannerImageUrl) { img in
                     img.resizable().scaledToFill()
                 } placeholder: {
-                    Rectangle().fill(Color.gray.opacity(0.1))
+                    Rectangle().fill(Color.gray.opacity(0.08))
                 }
-                .frame(width: 80, height: 60)
-                .cornerRadius(8)
-                .clipped()
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(registry.name)
                         .font(.subheadline)
-                        .fontWeight(.bold)
+                        .fontWeight(.semibold)
                         .foregroundColor(.primary)
+                        .lineLimit(1)
                     
                     Text("\(registry.type)  •  \(registry.date)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
                     
-                    Text("\(registry.itemsCount) items")
-                        .font(.caption)
-                        .fontWeight(.semibold)
+                    Text("\(registry.itemsCount) item\(registry.itemsCount == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .fontWeight(.medium)
                         .foregroundColor(.secondary)
                 }
                 
                 Spacer()
                 
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(.tertiaryLabel))
             }
-            .padding(12)
+            .padding(14)
             .background(Color(UIColor.systemBackground))
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.04), radius: 5, x: 0, y: 2)
-            .padding(.horizontal, 20)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+            .padding(.horizontal, 16)
         }
         .buttonStyle(.plain)
     }

@@ -9,6 +9,8 @@ struct RegistryDashboardView: View {
     @State private var showingAddProductsSheet = false
     @State private var selectedItemForTagging: RegistryItem? = nil
     @State private var showShareSheet = false
+    @State private var isLoadingDashboard = false
+    @State private var dashboardLoadingMessage = "Loading registry..."
     
     // Toast Alert States
     @State private var showingToast = false
@@ -19,15 +21,15 @@ struct RegistryDashboardView: View {
     @State private var showingItemDeleteConfirmation = false
     @State private var addingBundleTypes: Set<String> = []
     @State private var selectedProductForDetail: Product? = nil
+    @State private var selectedItemForContributors: RegistryItem? = nil
     
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
     @Environment(\.dismiss) var dismiss
     
     // Native iOS Share Sheet Helper
-    func shareRegistryCode(code: String) {
-        let shareText = "Join my Williams Sonoma Registry with code: \(code)"
-        let activityVC = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
+    func shareText(_ text: String) {
+        let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         
         if let scenes = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = scenes.windows.first?.rootViewController {
@@ -99,68 +101,66 @@ struct RegistryDashboardView: View {
                         Button(action: { showingAddProductsSheet = true }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "plus")
-                                    .font(.caption)
+                                    .font(.system(size: 12, weight: .bold))
                                 Text("Add Items")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
+                                    .font(.system(size: 14, weight: .semibold))
                             }
                             .foregroundColor(.white)
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 16)
                             .background(Color.black)
-                            .cornerRadius(6)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         .buttonStyle(.plain)
                         
                         Spacer()
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
                 .listRowSeparator(.hidden)
                 
-                // MARK: - Typographic Stat Box (No graphs/progress bars!)
+                // MARK: - Typographic Stat Box
                 Section {
                     let fulfilledCount = items.filter { $0.quantityReceived >= $0.quantityRequested && $0.quantityRequested > 0 }.count
                     let remainingCount = items.filter { $0.quantityReceived < $0.quantityRequested || $0.quantityRequested == 0 }.count
                     
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 0) {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text("WISHES FULFILLED")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.secondary)
-                                .kerning(1.2)
+                                .kerning(1)
                             Text("\(fulfilledCount)")
-                                .font(.system(size: 28, weight: .thin, design: .serif))
+                                .font(.system(size: 32, weight: .light, design: .rounded))
                                 .foregroundColor(.primary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         
                         Rectangle()
-                            .fill(Color.primary.opacity(0.1))
-                            .frame(width: 1, height: 40)
-                            .padding(.horizontal, 16)
+                            .fill(Color(.separator))
+                            .frame(width: 0.5, height: 44)
                         
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text("GIFTS REMAINING")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.secondary)
-                                .kerning(1.2)
+                                .kerning(1)
                             Text("\(remainingCount)")
-                                .font(.system(size: 28, weight: .thin, design: .serif))
+                                .font(.system(size: 32, weight: .light, design: .rounded))
                                 .foregroundColor(.primary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 24)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
                     .padding(.horizontal, 20)
+                    .padding(.vertical, 18)
+                    .background(Color(UIColor.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 2)
+                    .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
@@ -188,28 +188,39 @@ struct RegistryDashboardView: View {
                                         isAdded: isAdded,
                                         isAdding: isAdding
                                     ) {
-                                        Task {
-                                            withAnimation(.easeInOut) {
-                                                addingBundleTypes.insert(bundle.bundleType)
-                                            }
-                                            try? await MockRegistryService.shared.applySmartBundle(registryId: registry.id, bundleType: bundle.bundleType)
-                                            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s for backend inserts
-                                            try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                                            await MainActor.run {
-                                                withAnimation(.spring(response: 0.6, dampingFraction: 0.7, blendDuration: 0)) {
-                                                    items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                                                }
-                                                withAnimation(.easeInOut) {
-                                                    addingBundleTypes.remove(bundle.bundleType)
-                                                }
-                                                toastMessage = "Starter Bundle Added!"
-                                                withAnimation(.spring()) {
-                                                    showingToast = true
-                                                }
-                                            }
-                                        }
+                        Task {
+                            withAnimation(.easeInOut) {
+                                addingBundleTypes.insert(bundle.bundleType)
+                            }
+                            do {
+                                try await MockRegistryService.shared.applySmartBundle(registryId: registry.id, bundleType: bundle.bundleType)
+                                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s for backend inserts
+                                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
+                                await MainActor.run {
+                                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7, blendDuration: 0)) {
+                                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
+                                    }
+                                    toastMessage = "Starter Bundle Added!"
+                                    withAnimation(.spring()) {
+                                        showingToast = true
                                     }
                                 }
+                            } catch {
+                                await MainActor.run {
+                                    toastMessage = error.localizedDescription
+                                    withAnimation(.spring()) {
+                                        showingToast = true
+                                    }
+                                }
+                            }
+                            await MainActor.run {
+                                withAnimation(.easeInOut) {
+                                    addingBundleTypes.remove(bundle.bundleType)
+                                }
+                            }
+                        }
+                    }
+                }
                             }
                             .padding(.horizontal, 20)
                         }
@@ -242,7 +253,9 @@ struct RegistryDashboardView: View {
                     } else {
                         ForEach(items) { item in
                             RegistryItemRow(item: item, registryId: registry.id, onTap: {
-                                if let prod = item.products {
+                                if let contribs = item.contributions, !contribs.isEmpty {
+                                    selectedItemForContributors = item
+                                } else if let prod = item.products {
                                     selectedProductForDetail = prod
                                 }
                             }, onTagUpdate: {
@@ -301,14 +314,14 @@ struct RegistryDashboardView: View {
                     }
                 }
             }
+
+            if isLoadingDashboard {
+                RegistryLoadingOverlay(message: dashboardLoadingMessage)
+            }
         }
         .onAppear {
             Task {
-                try? await registryService.fetchRegistryDashboard(registryId: registry.id)
-                await registryService.fetchStarterBundles(eventType: registry.type)
-                await MainActor.run {
-                    items = registryService.registryItems[registry.id] ?? []
-                }
+                await refreshDashboard(message: "Loading registry...")
                 await RecommendationEngine.shared.fetchRecommendations()
             }
         }
@@ -328,10 +341,7 @@ struct RegistryDashboardView: View {
         .sheet(isPresented: $showingEditSheet) {
             RegistryEditView(registry: $registry, items: $items, onSave: {
                 Task {
-                    try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                    await MainActor.run {
-                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                    }
+                    await refreshDashboard(message: "Refreshing registry...")
                 }
             }, onDelete: {
                 dismiss()
@@ -340,31 +350,28 @@ struct RegistryDashboardView: View {
         .sheet(isPresented: $showingAddProductsSheet) {
             RegistryAddProductsView(registryId: registry.id) {
                 Task {
-                    try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                    await MainActor.run {
-                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                    }
+                    await refreshDashboard(message: "Refreshing items...")
                 }
             }
         }
         .sheet(item: $selectedProductForDetail) { product in
             NavigationStack {
-                ProductDetailView(product: product)
+                ProductDetailView(product: product, showCloseButton: true)
             }
+        }
+        .sheet(item: $selectedItemForContributors) { item in
+            RegistryItemContributorsView(item: item)
         }
         .sheet(item: $selectedItemForTagging) { item in
             RegistryItemTagEditView(registryId: registry.id, item: item) {
                 Task {
-                    try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
-                    await MainActor.run {
-                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
-                    }
+                    await refreshDashboard(message: "Updating item...")
                 }
             }
         }
         .sheet(isPresented: $showShareSheet) {
-            RegistryShareSheetView(code: registry.code) {
-                shareRegistryCode(code: registry.code)
+            RegistryShareSheetView(registryId: registry.id, fallbackCode: registry.code) { textToShare in
+                shareText(textToShare)
             }
         }
         // MARK: - Trailing Item Deletion Confirmation
@@ -372,11 +379,25 @@ struct RegistryDashboardView: View {
             Button("Delete", role: .destructive) {
                 if let item = itemToDelete {
                     Task {
-                        MockRegistryService.shared.removeItem(registryId: registry.id, itemId: item.id)
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        try? await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
                         await MainActor.run {
-                            items = MockRegistryService.shared.registryItems[registry.id] ?? []
+                            dashboardLoadingMessage = "Deleting item..."
+                            isLoadingDashboard = true
+                        }
+                        do {
+                            try await RegistryService.shared.deleteRegistryItem(registryId: registry.id, itemId: item.id)
+                            try await registryService.fetchRegistryDashboard(registryId: registry.id)
+                            await MainActor.run {
+                                items = registryService.registryItems[registry.id] ?? []
+                                isLoadingDashboard = false
+                            }
+                        } catch {
+                            await MainActor.run {
+                                isLoadingDashboard = false
+                                toastMessage = error.localizedDescription
+                                withAnimation(.spring()) {
+                                    showingToast = true
+                                }
+                            }
                         }
                     }
                 }
@@ -392,6 +413,23 @@ struct RegistryDashboardView: View {
                 Text("Are you sure you want to remove this item?")
             }
         }
+    }
+
+    @MainActor
+    private func refreshDashboard(message: String) async {
+        dashboardLoadingMessage = message
+        isLoadingDashboard = true
+        do {
+            try await registryService.fetchRegistryDashboard(registryId: registry.id)
+            await registryService.fetchStarterBundles(eventType: registry.type)
+            items = registryService.registryItems[registry.id] ?? []
+        } catch {
+            toastMessage = error.localizedDescription
+            withAnimation(.spring()) {
+                showingToast = true
+            }
+        }
+        isLoadingDashboard = false
     }
 }
 
@@ -656,90 +694,169 @@ struct RegistryAddProductsView: View {
     @Environment(\.dismiss) var dismiss
     
     @StateObject private var productViewModel = ProductViewModel()
-    @State private var searchQuery = ""
+    @StateObject private var searchViewModel = SearchViewModel()
     @State private var showingToast = false
     @State private var toastMessage = ""
+    @State private var addingProductIds: Set<Int> = []
+    @State private var addedProductIds: Set<Int> = []
     
     let onItemsAdded: () -> Void
     
     var body: some View {
         NavigationStack {
             ZStack {
-                VStack {
-                    HStack {
+                VStack(spacing: 0) {
+                    // MARK: — Standardized Search Bar (Matches ProductListView)
+                    HStack(spacing: 10) {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.secondary)
-                        TextField("Search catalog...", text: $searchQuery)
-                            .font(.body)
-                    }
-                    .padding()
-                    .background(Color(UIColor.systemGray6))
-                    .cornerRadius(8)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    
-                    if productViewModel.isLoading {
-                        ProgressView().padding(.top, 40)
-                    } else {
-                        List {
-                            // Fetch from Recommendation Engine first if empty
-                            let initialProducts = searchQuery.isEmpty ? RecommendationEngine.shared.recommendedProducts : productViewModel.products
-                            let filtered = initialProducts.filter {
-                                searchQuery.isEmpty ? true : $0.name.localizedCaseInsensitiveContains(searchQuery) || ($0.category ?? "").localizedCaseInsensitiveContains(searchQuery)
+                            .font(.system(size: 15))
+                        
+                        TextField("Search products, styles, or moods…", text: $searchViewModel.searchText)
+                            .font(.system(size: 15))
+                            .submitLabel(.search)
+                            .onSubmit {
+                                searchViewModel.performSearch(query: searchViewModel.searchText)
                             }
-                            
-                            Section(header: Text(searchQuery.isEmpty ? "Suggestions" : "Results").font(.caption).fontWeight(.bold).foregroundColor(.secondary)) {
-                                ForEach(filtered) { product in
-                                    HStack(spacing: 12) {
-                                    CachedImageView(urlString: product.imageUrl ?? "") { img in
-                                        img.resizable().scaledToFill()
-                                    } placeholder: {
-                                        Rectangle().fill(Color.gray.opacity(0.1))
-                                    }
-                                    .frame(width: 50, height: 50)
-                                    .cornerRadius(6)
-                                    .clipped()
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(product.name)
-                                            .font(.subheadline)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(.primary)
-                                            .lineLimit(1)
-                                        Text(product.category ?? "General")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Text("$\(String(format: "%.2f", product.price))")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.primary)
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    Button(action: {
-                                        Task {
-                                            try? await MockRegistryService.shared.addProductToRegistry(registryId: registryId, product: product)
-                                            await MainActor.run {
-                                                onItemsAdded()
-                                                toastMessage = "Added \(product.name)!"
-                                                withAnimation(.spring()) {
-                                                    showingToast = true
+                        
+                        if !searchViewModel.searchText.isEmpty {
+                            Button {
+                                searchViewModel.searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                                    .font(.system(size: 15))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(UIColor.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                    
+                    if searchViewModel.isSearching {
+                        RegistryInlineLoadingView(message: "Searching catalog...")
+                    } else if productViewModel.isLoading && !searchViewModel.hasSearched {
+                        RegistryInlineLoadingView(message: "Loading suggestions...")
+                    } else if let errorMessage = productViewModel.errorMessage, productViewModel.products.isEmpty && !searchViewModel.hasSearched {
+                        VStack(spacing: 10) {
+                            Text(errorMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Retry") {
+                                Task { await productViewModel.fetchProducts() }
+                            }
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 14)
+                            .background(Color.black)
+                            .cornerRadius(6)
+                        }
+                        .padding(.top, 40)
+                        .padding(.horizontal, 20)
+                    } else {
+                        // Display search results or suggestions
+                        let showSearchResults = searchViewModel.hasSearched
+                        let productsToDisplay: [Product] = {
+                            if showSearchResults {
+                                return searchViewModel.searchResults
+                            } else {
+                                let initial = productViewModel.products.isEmpty ? RecommendationEngine.shared.recommendedProducts : productViewModel.products
+                                return initial.filter {
+                                    searchViewModel.searchText.isEmpty ? true : $0.name.localizedCaseInsensitiveContains(searchViewModel.searchText) || ($0.category ?? "").localizedCaseInsensitiveContains(searchViewModel.searchText)
+                                }
+                            }
+                        }()
+                        
+                        if showSearchResults && productsToDisplay.isEmpty {
+                            ScrollView {
+                                SearchEmptyStateView(query: searchViewModel.searchText)
+                            }
+                        } else {
+                            List {
+                                Section(header: Text(showSearchResults ? "Search Results" : (searchViewModel.searchText.isEmpty ? "Suggestions" : "Filtered suggestions")).font(.caption).fontWeight(.bold).foregroundColor(.secondary)) {
+                                    ForEach(productsToDisplay) { product in
+                                        HStack(spacing: 12) {
+                                            CachedImageView(urlString: product.imageUrl ?? "") { img in
+                                                img.resizable().scaledToFill()
+                                            } placeholder: {
+                                                Rectangle().fill(Color.gray.opacity(0.1))
+                                            }
+                                            .frame(width: 50, height: 50)
+                                            .cornerRadius(6)
+                                            .clipped()
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(product.name)
+                                                    .font(.subheadline)
+                                                    .fontWeight(.semibold)
+                                                    .foregroundColor(.primary)
+                                                    .lineLimit(1)
+                                                Text(product.category ?? "General")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                                Text("$\(String(format: "%.2f", product.price))")
+                                                    .font(.caption)
+                                                    .fontWeight(.bold)
+                                                    .foregroundColor(.primary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Button(action: {
+                                                Task {
+                                                    await MainActor.run {
+                                                        addingProductIds.insert(product.id)
+                                                    }
+                                                    do {
+                                                        try await MockRegistryService.shared.addProductToRegistry(registryId: registryId, product: product)
+                                                        await MainActor.run {
+                                                            addedProductIds.insert(product.id)
+                                                            onItemsAdded()
+                                                            toastMessage = "Added \(product.name)!"
+                                                            withAnimation(.spring()) {
+                                                                showingToast = true
+                                                            }
+                                                        }
+                                                    } catch {
+                                                        await MainActor.run {
+                                                            toastMessage = error.localizedDescription
+                                                            withAnimation(.spring()) {
+                                                                showingToast = true
+                                                            }
+                                                        }
+                                                    }
+                                                    await MainActor.run {
+                                                        addingProductIds.remove(product.id)
+                                                    }
+                                                }
+                                            }) {
+                                                if addingProductIds.contains(product.id) {
+                                                    ProgressView()
+                                                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                                } else {
+                                                    Image(systemName: addedProductIds.contains(product.id) ? "checkmark.circle.fill" : "plus.circle.fill")
+                                                        .font(.title3)
+                                                        .foregroundColor(.black)
                                                 }
                                             }
+                                            .buttonStyle(.plain)
+                                            .disabled(addingProductIds.contains(product.id))
                                         }
-                                    }) {
-                                        Image(systemName: "plus.circle.fill")
-                                            .font(.title3)
-                                            .foregroundColor(.black)
+                                        .padding(.vertical, 4)
                                     }
-                                    .buttonStyle(.plain)
                                 }
-                                .padding(.vertical, 4)
                             }
-                            }
+                            .listStyle(.plain)
                         }
-                        .listStyle(.plain)
                     }
                 }
                 
@@ -855,8 +972,7 @@ struct RichBundleCard: View {
             .padding(12)
         }
         .frame(width: 200, height: 130)
-        .cornerRadius(8)
-        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -869,33 +985,30 @@ struct RegistryItemRow: View {
     let onTagUpdate: () -> Void
     
     var isFullyGifted: Bool {
-        item.quantityReceived >= item.quantityRequested && item.quantityRequested > 0
+        let qtyFullyGifted = item.quantityReceived >= item.quantityRequested && item.quantityRequested > 0
+        let contributionFullyFunded = (item.isFullyFunded ?? false)
+        return qtyFullyGifted || contributionFullyFunded
     }
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             if let product = item.products {
                 CachedImageView(urlString: product.imageUrl ?? "") { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
-                    Rectangle().fill(Color.gray.opacity(0.1))
+                    Rectangle().fill(Color.gray.opacity(0.08))
                 }
-                .frame(width: 60, height: 60)
-                .cornerRadius(6)
-                .clipped()
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .opacity(isFullyGifted ? 0.5 : 1.0)
                 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(product.name)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .lineLimit(2)
-                            .foregroundColor(.primary)
-                            .opacity(isFullyGifted ? 0.5 : 1.0)
-                        
-                        Spacer()
-                    }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(product.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(2)
+                        .foregroundColor(.primary)
+                        .opacity(isFullyGifted ? 0.5 : 1.0)
                     
                     Text("$\(String(format: "%.2f", product.price))")
                         .font(.caption)
@@ -904,32 +1017,32 @@ struct RegistryItemRow: View {
                     HStack(spacing: 6) {
                         if isFullyGifted {
                             Text("FULLY GIFTED")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
                                 .background(Color.gray)
-                                .cornerRadius(2)
+                                .clipShape(Capsule())
                         } else {
                             if item.isMostWanted {
                                 Text("MOST WANTED")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
                                     .background(Color.black)
-                                    .cornerRadius(2)
+                                    .clipShape(Capsule())
                             }
                             
                             let isGroupGift = item.isGroupGift ?? (product.price >= 150.0)
                             if isGroupGift {
                                 Text("GROUP GIFT")
-                                    .font(.system(size: 8, weight: .bold))
+                                    .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
                                     .background(Color.black.opacity(0.6))
-                                    .cornerRadius(2)
+                                    .clipShape(Capsule())
                             }
                         }
                     }
@@ -937,17 +1050,26 @@ struct RegistryItemRow: View {
                     Text("Requested: \(item.quantityRequested) | Received: \(item.quantityReceived)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+
+                    let isGroupGift = item.isGroupGift ?? (product.price >= 150.0)
+                    if isGroupGift && item.quantityRequested > 0 && !isFullyGifted {
+                        let targetAmount = product.price * Double(max(1, item.quantityRequested))
+                        let contributed = item.totalContributed ?? 0
+                        let remaining = max(0, targetAmount - contributed)
+                        Text("$\(Int(contributed)) of $\(Int(targetAmount)) funded  •  $\(Int(remaining)) left")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 Spacer()
                 
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.trailing, 4)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(.tertiaryLabel))
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture {
             onTap()
@@ -1012,15 +1134,94 @@ struct RegistryItemTagEditView: View {
     }
 }
 
+// MARK: - Registry Item Contributors View
+
+struct RegistryItemContributorsView: View {
+    let item: RegistryItem
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                if let product = item.products {
+                    Section {
+                        HStack(spacing: 16) {
+                            CachedImageView(urlString: product.imageUrl ?? "") { img in
+                                img.resizable().scaledToFill()
+                            } placeholder: {
+                                Rectangle().fill(Color.gray.opacity(0.1))
+                            }
+                            .frame(width: 60, height: 60)
+                            .cornerRadius(8)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(product.name)
+                                    .font(.headline)
+                                Text("$\(String(format: "%.2f", product.price))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                
+                Section(header: Text("Contributors")) {
+                    if let contribs = item.contributions, !contribs.isEmpty {
+                        ForEach(contribs) { c in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(c.contributorName)
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                    Spacer()
+                                    Text("$\(String(format: "%.2f", c.amount))")
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.secondary)
+                                }
+                                if let msg = c.message, !msg.isEmpty {
+                                    Text("\"\(msg)\"")
+                                        .font(.caption)
+                                        .italic()
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    } else {
+                        Text("No contributions yet.")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Gift Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Close") { dismiss() }
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 // MARK: - Premium Registry Share Sheet
 
 struct RegistryShareSheetView: View {
-    let code: String
-    let onNativeShareTap: () -> Void
-    
+    let registryId: String
+    let fallbackCode: String
+    let onNativeShareTap: (String) -> Void
+
     @Environment(\.dismiss) var dismiss
     @State private var copied = false
-    
+    @State private var copiedLink = false
+    @State private var shareCode: String = ""
+    @State private var shareUrl: String = ""
+
     var body: some View {
         VStack(spacing: 24) {
             // Drag Indicator
@@ -1028,38 +1229,35 @@ struct RegistryShareSheetView: View {
                 .fill(Color.secondary.opacity(0.3))
                 .frame(width: 36, height: 5)
                 .padding(.top, 12)
-            
+
             VStack(spacing: 8) {
-                Text("Share Registry Code")
+                Text("Share Registry")
                     .font(.headline)
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
-                
-                Text("Give this code to your friends and family to join your gift registry directly.")
+
+                Text("Send your code or link to friends and family so they can join your registry.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
             }
-            
+
             // Share Code Display Box
             HStack(spacing: 12) {
-                Text(code)
+                Text(shareCode.isEmpty ? fallbackCode : shareCode)
                     .font(.system(size: 26, weight: .bold, design: .serif))
                     .tracking(2)
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
-                
+
                 Button(action: {
-                    UIPasteboard.general.string = code
+                    let codeToCopy = shareCode.isEmpty ? fallbackCode : shareCode
+                    UIPasteboard.general.string = codeToCopy
                     let impact = UINotificationFeedbackGenerator()
                     impact.notificationOccurred(.success)
-                    withAnimation {
-                        copied = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        copied = false
-                    }
+                    withAnimation { copied = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
                 }) {
                     Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
                         .font(.body)
@@ -1072,19 +1270,55 @@ struct RegistryShareSheetView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
             )
-            
+
+            if !shareUrl.isEmpty {
+                VStack(spacing: 8) {
+                    Text("Share Link")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 12) {
+                        Text(shareUrl)
+                            .font(.footnote)
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .textSelection(.enabled)
+
+                        Button(action: {
+                            UIPasteboard.general.string = shareUrl
+                            let impact = UINotificationFeedbackGenerator()
+                            impact.notificationOccurred(.success)
+                            withAnimation { copiedLink = true }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedLink = false }
+                        }) {
+                            Image(systemName: copiedLink ? "checkmark.circle.fill" : "link")
+                                .font(.body)
+                                .foregroundColor(copiedLink ? .green : .primary)
+                        }
+                    }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
+                    )
+                    .padding(.horizontal, 24)
+                }
+            }
+
             VStack(spacing: 12) {
                 Text("OR SHARE TO APPS")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.secondary)
                     .tracking(1)
-                
-                // Share buttons
+
                 Button(action: {
                     dismiss()
-                    // Dispatch slightly after dismiss for clean native view presentation
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        onNativeShareTap()
+                        let code = shareCode.isEmpty ? fallbackCode : shareCode
+                        let textToShare = !shareUrl.isEmpty ? shareUrl : "Join my registry with code: \(code)"
+                        onNativeShareTap(textToShare)
                     }
                 }) {
                     HStack {
@@ -1102,11 +1336,21 @@ struct RegistryShareSheetView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 24)
-            
+
             Spacer()
         }
         .padding(.bottom, 24)
-        .presentationDetents([.fraction(0.45)])
+        .presentationDetents([.fraction(0.55)])
         .presentationDragIndicator(.hidden)
+        .task {
+            do {
+                let resp = try await RegistryService.shared.fetchShareLink(registryId: registryId)
+                shareCode = resp.shareToken
+                shareUrl = resp.shareUrl
+            } catch {
+                shareCode = fallbackCode
+                shareUrl = ""
+            }
+        }
     }
 }

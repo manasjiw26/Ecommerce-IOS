@@ -5,6 +5,7 @@ struct RegistryWizardView: View {
     
     @State private var registryName = ""
     @State private var eventType = "Wedding"
+    @State private var customEventType = ""
     @State private var eventDate = Date()
     @State private var eventLocation = ""
     
@@ -26,8 +27,8 @@ struct RegistryWizardView: View {
         "Other"
     ]
     
-    // Callback when created
-    let onCreate: ((name: String, type: String, date: String, location: String)) -> Void
+    // Callback when created (date must be ISO: yyyy-MM-dd for API)
+    let onCreate: ((name: String, type: String, isoDate: String, location: String)) -> Void
     
     var body: some View {
         NavigationStack {
@@ -42,6 +43,13 @@ struct RegistryWizardView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
+
+                    if eventType == "Other" {
+                        TextField("Enter your event type", text: $customEventType)
+                            .font(.body)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                    }
                 } header: {
                     Text("What are we celebrating?")
                         .font(.headline)
@@ -69,22 +77,32 @@ struct RegistryWizardView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
-                        let name = registryName.isEmpty ? "My Registry" : registryName
-                        let formatter = DateFormatter()
-                        formatter.dateFormat = "MMM d, yyyy"
-                        let dateString = formatter.string(from: eventDate)
+                        let name = registryName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let finalName = name.isEmpty ? "My Registry" : name
+                        let isoDate = RegistryDateFormatter.isoDateString(from: eventDate)
+                        let finalEventType: String = {
+                            if eventType == "Other" {
+                                let typed = customEventType.trimmingCharacters(in: .whitespacesAndNewlines)
+                                return typed.isEmpty ? "Other" : typed
+                            }
+                            return eventType
+                        }()
                         
                         onCreate((
-                            name: name + "'s " + eventType,
-                            type: eventType,
-                            date: dateString,
+                            name: finalName,
+                            type: finalEventType,
+                            isoDate: isoDate,
                             location: eventLocation
                         ))
                         dismiss()
                     }
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
-                    .disabled(registryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled({
+                        if registryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+                        if eventType == "Other" && customEventType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+                        return false
+                    }())
                 }
             }
         }

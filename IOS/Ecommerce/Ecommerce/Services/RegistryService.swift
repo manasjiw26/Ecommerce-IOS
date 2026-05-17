@@ -40,6 +40,21 @@ struct GroupContributionResponse: Codable {
     }
 }
 
+struct RegistryShareLinkResponse: Codable {
+    let shareToken: String
+    let shareUrl: String
+
+    enum CodingKeys: String, CodingKey {
+        case shareToken = "share_token"
+        case shareUrl = "share_url"
+    }
+}
+
+struct RegistryAPIError: Codable {
+    let error: String?
+    let code: Int?
+}
+
 class RegistryService {
     static let shared = RegistryService()
     private let baseURL = Config.apiBaseURL + "/registry"
@@ -144,8 +159,16 @@ class RegistryService {
         request.timeoutInterval = 15
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
+        }
+        guard httpResponse.statusCode == 200 else {
+            let apiError = try? JSONDecoder().decode(RegistryAPIError.self, from: data)
+            throw NSError(
+                domain: "RegistryService",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: apiError?.error ?? "Failed to add product to registry."]
+            )
         }
         return try JSONDecoder().decode(RegistryItem.self, from: data)
     }
@@ -177,7 +200,7 @@ class RegistryService {
         }
     }
     
-    func joinRegistryByCode(code: String) async throws -> Registry? {
+    func joinRegistryByCode(code: String) async throws -> RegistryDashboardResponse? {
         guard let encodedCode = code.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "\(baseURL)/public/\(encodedCode)") else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
@@ -190,8 +213,20 @@ class RegistryService {
             return nil
         }
         
-        let dashboard = try JSONDecoder().decode(RegistryDashboardResponse.self, from: data)
-        return dashboard.registry
+        return try JSONDecoder().decode(RegistryDashboardResponse.self, from: data)
+    }
+
+    func searchRegistriesByName(_ name: String) async throws -> [Registry] {
+        guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(baseURL)/search?name=\(encoded)") else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode([Registry].self, from: data)
     }
     
     func addAlternativeGift(registryId: String, productId: Int) async throws -> RegistryItem {
@@ -224,5 +259,32 @@ class RegistryService {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(GroupContributionResponse.self, from: data)
+    }
+
+    func fetchShareLink(registryId: String) async throws -> RegistryShareLinkResponse {
+        guard let url = URL(string: "\(baseURL)/\(registryId)/share-link") else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(RegistryShareLinkResponse.self, from: data)
+    }
+    
+    func addCollaborator(registryId: String, email: String, role: String = "viewer") async throws {
+        guard let url = URL(string: "\(baseURL)/\(registryId)/collaborators") else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["email": email, "role": role]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
     }
 }

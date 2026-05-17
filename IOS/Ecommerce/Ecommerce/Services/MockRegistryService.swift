@@ -59,14 +59,17 @@ class MockRegistryService: ObservableObject {
     
     @MainActor
     func fetchRegistriesFromBackend() async throws {
-        let currentUserId = AuthSession.shared.currentUser?.id ?? "00000000-0000-0000-0000-000000000001"
+        guard let currentUserId = AuthSession.shared.currentUser?.id else {
+            self.registries = []
+            self.registryItems = [:]
+            return
+        }
         
         let loaded = try await RegistryService.shared.fetchUserRegistries(userId: currentUserId)
         var extendedList: [MockRegistryExtended] = []
         
         for reg in loaded {
-            var ext = reg.toExtended(currentUserId: AuthSession.shared.currentUser?.id)
-            // Fetch items asynchronously to set item counts accurately
+            var ext = reg.toExtended(currentUserId: currentUserId)
             do {
                 let dashboard = try await RegistryService.shared.fetchRegistryDashboard(registryId: reg.id)
                 ext.itemsCount = dashboard.items.count
@@ -78,7 +81,10 @@ class MockRegistryService: ObservableObject {
             extendedList.append(ext)
         }
         
-        self.registries = extendedList
+        // Merge: keep locally-joined registries that the backend hasn't returned yet
+        let backendIds = Set(extendedList.map { $0.id })
+        let localOnly = self.registries.filter { !backendIds.contains($0.id) }
+        self.registries = extendedList + localOnly
     }
     
     @MainActor
@@ -90,8 +96,9 @@ class MockRegistryService: ObservableObject {
         if let idx = registries.firstIndex(where: { $0.id == registryId }) {
             registries[idx].itemsCount = response.items.count
             registries[idx].name = response.registry.theme ?? registries[idx].name
-            registries[idx].date = response.registry.eventDate
+            registries[idx].date = RegistryDateFormatter.displayString(from: response.registry.eventDate)
             registries[idx].location = response.registry.eventLocation ?? "N/A"
+            registries[idx].code = response.registry.shareToken ?? registries[idx].code
         }
     }
     
@@ -154,6 +161,12 @@ class MockRegistryService: ObservableObject {
         } else {
             return "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&w=1200&q=80"
         }
+    }
+
+    func buildEventStory(theme: String?, eventType: String) -> String {
+        let base = theme?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (base?.isEmpty == false) ? base! : "Our Celebration"
+        return "\(name) is coming up — we’re celebrating \(eventType). Thank you for helping us build our home together."
     }
     
     // MARK: - Smart Starter Bundle Options based on Event Type
@@ -242,57 +255,44 @@ class MockRegistryService: ObservableObject {
     
     func applySmartBundle(registryId: String, bundleType: String) async throws {
         var productsToAdd: [Product] = []
+        let catalogProducts = (try? await APIService.shared.fetchProducts()) ?? []
         
         // Try to find the bundle dynamically from the backend fetched list first
         if let matchingBundle = starterBundles.first(where: { $0.bundleType == bundleType }),
            let pIds = matchingBundle.productIds, !pIds.isEmpty {
             
-            let engineProducts = RecommendationEngine.shared.recommendedProducts
             for pid in pIds {
-                if let found = engineProducts.first(where: { $0.id == pid }) {
+                if let found = catalogProducts.first(where: { $0.id == pid }) {
                     productsToAdd.append(found)
-                } else {
-                    if let fetched = try? await fetchProductById(pid: pid) {
-                        productsToAdd.append(fetched)
-                    }
+                } else if let fetched = try? await fetchProductById(pid: pid) {
+                    productsToAdd.append(fetched)
                 }
             }
         }
         
-        // Fallback to local catalog matches if empty
+        // Fallback to backend catalog matches if the bundle had no product ids.
         if productsToAdd.isEmpty {
-            let engineProducts = RecommendationEngine.shared.recommendedProducts
             let typeLower = bundleType.lowercased()
             
             if typeLower.contains("festive") || typeLower.contains("royal") || typeLower.contains("barware") || typeLower.contains("entertaining") || typeLower.contains("mixology") || typeLower.contains("glassware") {
-                let filtered = engineProducts.filter {
+                let filtered = catalogProducts.filter {
                     let name = $0.name.lowercased()
                     let cat = ($0.category ?? "").lowercased()
                     return name.contains("glass") || name.contains("wine") || name.contains("appetizer") || name.contains("platter") || name.contains("board") || name.contains("cheese") || cat.contains("table") || cat.contains("bar") || cat.contains("din")
                 }
-                productsToAdd = Array(filtered.prefix(2))
-                
-                if productsToAdd.isEmpty {
-                    productsToAdd = [
-                        Product(id: 9670912, name: "Dorset Martini Glasses, Set of 4", price: 179.8, description: "Dorset Martini Glasses, Set of 4", imageUrl: "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/img236m.jpg", category: "bar-glasses-martini", stock: 20, tags: ["martini glasses", "cocktail glasses", "stemware"], aiReasoning: nil),
-                        Product(id: 1341411, name: "Apilco Tradition Porcelain Cup & Saucer, Each", price: 34.95, description: "Apilco Tradition Porcelain Cup & Saucer, Each", imageUrl: "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/img95m.jpg", category: "cups-and-saucers", stock: 25, tags: ["cup set", "saucer", "porcelain"], aiReasoning: nil)
-                    ]
-                }
+                productsToAdd = Array((filtered.isEmpty ? catalogProducts : filtered).prefix(2))
             } else {
-                let filtered = engineProducts.filter {
+                let filtered = catalogProducts.filter {
                     let name = $0.name.lowercased()
                     let cat = ($0.category ?? "").lowercased()
                     return name.contains("pan") || name.contains("pot") || name.contains("chef") || name.contains("knife") || name.contains("oven") || name.contains("bake") || name.contains("mixer") || cat.contains("cook") || cat.contains("appl") || cat.contains("cut")
                 }
-                productsToAdd = Array(filtered.prefix(2))
-                
-                if productsToAdd.isEmpty {
-                    productsToAdd = [
-                        Product(id: 2453926, name: "Staub Enameled Cast Iron Round Dutch Oven, 7-Qt., Basil", price: 299.95, description: "Staub Enameled Cast Iron Round Dutch Oven, 7-Qt., Basil", imageUrl: "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/img83m.jpg", category: "dutch-ovens", stock: 10, tags: ["cooking pot", "dutch oven", "cast iron"], aiReasoning: nil),
-                        Product(id: 181543, name: "Citron Glow Sauté & Sauce Pan", price: 180.00, description: "A vibrant yellow and black enameled pan.", imageUrl: "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/img5m.jpg", category: "Cookware", stock: 15, tags: ["sauce pan", "saute pan", "cookware"], aiReasoning: nil)
-                    ]
-                }
+                productsToAdd = Array((filtered.isEmpty ? catalogProducts : filtered).prefix(2))
             }
+        }
+
+        guard !productsToAdd.isEmpty else {
+            throw NSError(domain: "Registry", code: 404, userInfo: [NSLocalizedDescriptionKey: "No catalog products are available for this starter bundle."])
         }
         
         for prod in productsToAdd {
@@ -322,21 +322,23 @@ class MockRegistryService: ObservableObject {
     
     // MARK: - CRUD & Tag Toggles
     
-    func createRegistry(name: String, type: String, date: String, location: String) async throws -> MockRegistryExtended {
-        let currentUserId = AuthSession.shared.currentUser?.id ?? "00000000-0000-0000-0000-000000000001"
+    func createRegistry(name: String, type: String, isoDate: String, location: String) async throws -> MockRegistryExtended {
+        guard let currentUserId = AuthSession.shared.currentUser?.id else {
+            throw NSError(domain: "Registry", code: 401, userInfo: [NSLocalizedDescriptionKey: "You must be logged in to create a registry."])
+        }
         
         let dto = RegistryCreationDTO(
             userId: currentUserId,
             eventType: type,
-            eventDate: date,
-            eventLocation: location,
+            eventDate: isoDate,
+            eventLocation: location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : location,
             isPublic: true,
             theme: name,
-            budget: 2500.0 // Default starting budget
+            budget: nil
         )
         
         let created = try await RegistryService.shared.createRegistry(dto: dto)
-        let extended = created.toExtended(currentUserId: AuthSession.shared.currentUser?.id)
+        let extended = created.toExtended(currentUserId: currentUserId)
         
         await MainActor.run {
             self.registries.insert(extended, at: 0)
@@ -349,10 +351,11 @@ class MockRegistryService: ObservableObject {
     func updateRegistry(id: String, name: String, date: String, location: String) {
         Task {
             do {
+                let dateForApi = RegistryDateFormatter.isoDateString(fromDisplayString: date) ?? date
                 _ = try await RegistryService.shared.updateRegistry(
                     registryId: id,
                     name: name,
-                    date: date,
+                    date: dateForApi,
                     location: location
                 )
                 try await self.fetchRegistryDashboard(registryId: id)
@@ -455,17 +458,33 @@ class MockRegistryService: ObservableObject {
     }
     
     func joinRegistryByCode(code: String) async throws -> MockRegistryExtended? {
-        if let reg = try await RegistryService.shared.joinRegistryByCode(code: code) {
-            let extended = reg.toExtended(currentUserId: AuthSession.shared.currentUser?.id)
-            
-            await MainActor.run {
-                if !self.registries.contains(where: { $0.id == reg.id }) {
-                    self.registries.append(extended)
-                }
-            }
-            return extended
+        guard let dashboard = try await RegistryService.shared.joinRegistryByCode(code: code) else {
+            return nil
         }
-        return nil
+        
+        // If user is logged in, register them as a collaborator so it appears in "Registries I'm Gifting"
+        if let email = AuthSession.shared.currentUser?.email {
+            do {
+                try await RegistryService.shared.addCollaborator(registryId: dashboard.registry.id, email: email, role: "viewer")
+            } catch {
+                print("Warning: Failed to add collaborator for joined registry - \(error)")
+            }
+        }
+
+        var extended = dashboard.registry.toExtended(currentUserId: AuthSession.shared.currentUser?.id)
+        extended.itemsCount = dashboard.items.count
+
+        await MainActor.run {
+            self.registryItems[dashboard.registry.id] = dashboard.items
+
+            if let idx = self.registries.firstIndex(where: { $0.id == dashboard.registry.id }) {
+                self.registries[idx] = extended
+            } else {
+                self.registries.append(extended)
+            }
+        }
+
+        return extended
     }
 }
 
@@ -478,21 +497,68 @@ extension Registry {
             eventType: self.eventType
         )
         
-        let isOwnerVal = (currentUserId != nil && self.userId == currentUserId) || (currentUserId == nil)
+        let isOwnerVal = (currentUserId != nil && self.userId == currentUserId)
         
         return MockRegistryExtended(
             id: self.id,
-            code: self.shareToken ?? "GENERIC-CODE",
+            code: self.shareToken ?? "",
             name: self.theme ?? "\(self.eventType) Celebration",
             type: self.eventType,
-            date: self.eventDate,
+            date: RegistryDateFormatter.displayString(from: self.eventDate),
             location: self.eventLocation ?? "N/A",
             bannerImageUrl: bannerImage,
             itemsCount: 0, // Filled in dashboard fetch
             isOwner: isOwnerVal,
-            eventStory: "We are excited to build our home together. Thank you for your support!",
+            eventStory: MockRegistryService.shared.buildEventStory(theme: self.theme, eventType: self.eventType),
             isAnonymousGiftingAllowed: true,
             shipDirectlyToRegistrant: true
         )
+    }
+}
+
+// MARK: - Date Formatting
+
+enum RegistryDateFormatter {
+    static func displayString(from input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return input }
+
+        let display = DateFormatter()
+        display.locale = Locale(identifier: "en_US_POSIX")
+        display.dateFormat = "MMM d, yyyy"
+
+        if let d = parseDate(trimmed) {
+            return display.string(from: d)
+        }
+        return input
+    }
+
+    static func isoDateString(from date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: date)
+    }
+
+    static func isoDateString(fromDisplayString s: String) -> String? {
+        let display = DateFormatter()
+        display.locale = Locale(identifier: "en_US_POSIX")
+        display.dateFormat = "MMM d, yyyy"
+        if let d = display.date(from: s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return isoDateString(from: d)
+        }
+        return nil
+    }
+
+    private static func parseDate(_ s: String) -> Date? {
+        let isoDay = DateFormatter()
+        isoDay.locale = Locale(identifier: "en_US_POSIX")
+        isoDay.dateFormat = "yyyy-MM-dd"
+        if let d = isoDay.date(from: s) { return d }
+
+        let isoWithTime = ISO8601DateFormatter()
+        if let d = isoWithTime.date(from: s) { return d }
+
+        return nil
     }
 }

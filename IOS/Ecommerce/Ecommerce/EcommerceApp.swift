@@ -59,6 +59,13 @@ struct EcommerceApp: App {
                     withAnimation { showOnboarding = true }
                 }
             }
+            .onOpenURL { url in
+                if url.pathComponents.contains("r"), let token = url.pathComponents.last {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NotificationCenter.default.post(name: .openRegistryToken, object: token)
+                    }
+                }
+            }
         }
     }
 }
@@ -66,5 +73,6 @@ struct EcommerceApp: App {
 extension Notification.Name {
     static let userDidLogout = Notification.Name("userDidLogout")
     static let requireAuth   = Notification.Name("requireAuth")
+    static let openRegistryToken = Notification.Name("openRegistryToken")
 }
 
