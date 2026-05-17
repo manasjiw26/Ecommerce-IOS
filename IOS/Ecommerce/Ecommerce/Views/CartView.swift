@@ -5,11 +5,14 @@ struct CartView: View {
     @EnvironmentObject var productViewModel: ProductViewModel
     @StateObject private var occasionViewModel = OccasionViewModel()
     @StateObject private var pairItWithViewModel = PairItWithViewModel()
+    @StateObject private var intelligenceVM = CartIntelligenceViewModel()
+    @StateObject private var savedVM = SavedForLaterViewModel()
     @State private var showingCheckout = false
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
     @State private var occasion: String?
     @State private var isDetectingOccasion = false
+    @State private var showSavedForLater = false
 
     var outOfStockItems: [CartItem] {
         cartManager.items.filter { item in
@@ -52,6 +55,84 @@ struct CartView: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                             .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        // Smart cart coach
+                        if let coach = intelligenceVM.cartCoach {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "sparkles")
+                                    Text("Cart Coach")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text("\(coach.score)")
+                                        .font(.headline)
+                                        .fontWeight(.bold)
+                                }
+                                Text(coach.headline)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let first = coach.insights.first {
+                                    Text(first.message)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(14)
+                            .background(Color(UIColor.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                        }
+
+                        // Bundles / add-ons
+                        if let bundle = intelligenceVM.bundles.first, !bundle.items.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text(bundle.title)
+                                        .font(.headline)
+                                    Spacer()
+                                }
+                                if let why = bundle.reasoning, !why.isEmpty {
+                                    Text(why)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 12) {
+                                        ForEach(bundle.items.prefix(10)) { product in
+                                            NavigationLink(destination: ProductDetailView(product: product)) {
+                                                AIRecommendationCard(product: product)
+                                                    .frame(width: 170)
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+
+                        // Saved resurfacing nudge
+                        if let nudge = intelligenceVM.resurface.first {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Image(systemName: "bookmark.fill")
+                                        .foregroundColor(.secondary)
+                                    Text("Saved for later")
+                                        .font(.headline)
+                                    Spacer()
+                                    Button("View") { showSavedForLater = true }
+                                        .font(.subheadline)
+                                }
+                                Text(nudge.reason)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(14)
+                            .background(Color(UIColor.systemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                         }
                         
                         // Legacy/experimental "occasion insight" UI (kept commented so nothing is lost).
@@ -99,6 +180,23 @@ struct CartView: View {
                                 availableStock: stockMap[item.product.id] ?? (item.product.stock ?? 999)
                             )
                             .environmentObject(cartManager)
+                            .swipeActions(edge: .trailing) {
+                                if (stockMap[item.product.id] ?? (item.product.stock ?? 999)) < item.quantity {
+                                    Button {
+                                        Task {
+                                            try? await SavedForLaterService.shared.save(
+                                                deviceId: RecommendationEngine.shared.deviceId,
+                                                productId: item.product.id
+                                            )
+                                            cartManager.removeFromCart(product: item.product)
+                                            await savedVM.refresh()
+                                        }
+                                    } label: {
+                                        Label("Save", systemImage: "bookmark")
+                                    }
+                                    .tint(.orange)
+                                }
+                            }
                         }
 
                         if !outOfStockItems.isEmpty {
@@ -160,8 +258,21 @@ struct CartView: View {
             }
         }
         .navigationTitle("Cart")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showSavedForLater = true
+                } label: {
+                    Image(systemName: "bookmark")
+                }
+            }
+        }
         .sheet(isPresented: $showingCheckout) {
             RazorpayCheckoutView()
+                .environmentObject(cartManager)
+        }
+        .sheet(isPresented: $showSavedForLater) {
+            SavedForLaterView(vm: savedVM)
                 .environmentObject(cartManager)
         }
         .task {
@@ -174,6 +285,9 @@ struct CartView: View {
             // Priority 3: Stock check
             await refreshStock()
             await fetchOccasion()
+
+            // Smart cart sections
+            await intelligenceVM.refresh(cartItems: cartManager.items)
         }
         .onChange(of: cartManager.items) { _ in
             Task {
@@ -181,6 +295,7 @@ struct CartView: View {
                 pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
                 await refreshStock()
                 await fetchOccasion()
+                await intelligenceVM.refresh(cartItems: cartManager.items)
             }
         }
     }

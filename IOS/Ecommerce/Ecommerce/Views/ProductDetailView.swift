@@ -8,6 +8,7 @@ struct ProductDetailView: View {
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @State private var similarProducts: [Product] = []
     @State private var isLoadingSimilar = true
+    @State private var saveStatusText: String? = nil
     private let imageHeight: CGFloat = 340
     
     var body: some View {
@@ -198,6 +199,34 @@ struct ProductDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    Task {
+                        do {
+                            try await SavedForLaterService.shared.save(
+                                deviceId: RecommendationEngine.shared.deviceId,
+                                productId: product.id
+                            )
+                            saveStatusText = "Saved"
+                            try? await Task.sleep(nanoseconds: 800_000_000)
+                            saveStatusText = nil
+                        } catch {
+                            saveStatusText = "Failed"
+                            try? await Task.sleep(nanoseconds: 800_000_000)
+                            saveStatusText = nil
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bookmark")
+                        if let t = saveStatusText {
+                            Text(t).font(.caption)
+                        }
+                    }
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             addToCartBar
         }
