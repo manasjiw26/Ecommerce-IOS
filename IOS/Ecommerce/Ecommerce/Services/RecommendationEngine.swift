@@ -103,36 +103,28 @@ class RecommendationEngine: ObservableObject {
     }
     
     func fetchSimilarProducts(to product: Product) async -> [Product] {
-        guard let url = URL(string: "\(baseURL)/search") else { return [] }
+        guard let url = URL(string: "\(baseURL)/suggested-products") else { return [] }
         
-        // 1. Strict semantic search using exact name and category
-        var strictBody: [String: Any] = [
-            "query": product.name,
+        let body: [String: Any] = [
+            "product_id": product.id,
             "device_id": deviceId
         ]
-        if let category = product.category {
-            strictBody["category"] = category
+        
+        // 1. Fetch Gemini-orchestrated [Similar, Complementary, Suggested] feed
+        if let products = await performSearchRequest(url: url, body: body), !products.isEmpty {
+            return products
         }
         
-        if let strictProducts = await performSearchRequest(url: url, body: strictBody) {
-            let validStrict = strictProducts.filter { $0.id != product.id }
-            if !validStrict.isEmpty {
-                return Array(validStrict.prefix(8))
-            }
-        }
-        
-        // 2. Fallback: Only run if strict search returned 0 results
-        // Using the category name as a semantic query guarantees broad, highly-related results
-        let fallbackQuery = product.category ?? product.name
-        
+        // 2. Client-side network fallback if backend endpoint fails
+        guard let fallbackUrl = URL(string: "\(baseURL)/search") else { return [] }
         let fallbackBody: [String: Any] = [
-            "query": fallbackQuery,
+            "query": product.category ?? product.name,
             "device_id": deviceId
         ]
         
-        if let looseProducts = await performSearchRequest(url: url, body: fallbackBody) {
-            let validLoose = looseProducts.filter { $0.id != product.id }
-            return Array(validLoose.prefix(8))
+        if let fallbackProducts = await performSearchRequest(url: fallbackUrl, body: fallbackBody) {
+            let filtered = fallbackProducts.filter { $0.id != product.id }
+            return Array(filtered.prefix(8))
         }
         
         return []
