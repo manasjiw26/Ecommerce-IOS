@@ -7,8 +7,9 @@ struct Config {
     #if DEBUG
     // Simulator: 127.0.0.1 works.
     // Real device: change this to your Mac's LAN IP (e.g. http://192.168.1.11:3000).
-    static let apiBaseURL = "http://127.0.0.1:3000"
-    #else
+    //static let apiBaseURL = "http://127.0.0.1:3000"
+//    #else
+    
     static let apiBaseURL = "https://ecommerce-ios.onrender.com"
     #endif
     

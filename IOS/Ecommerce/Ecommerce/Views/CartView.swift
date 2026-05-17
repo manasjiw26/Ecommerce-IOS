@@ -175,7 +175,7 @@ struct CartView: View {
             await refreshStock()
             await fetchOccasion()
         }
-        .onChange(of: cartManager.items) { _ in
+        .onChange(of: cartManager.items) {
             Task {
                 occasionViewModel.detectOccasion(from: cartManager.items)
                 pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)

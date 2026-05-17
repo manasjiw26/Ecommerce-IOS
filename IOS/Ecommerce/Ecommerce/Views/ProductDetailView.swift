@@ -10,6 +10,10 @@ struct ProductDetailView: View {
     @State private var isLoadingSimilar = true
     private let imageHeight: CGFloat = 340
     
+    var quantityInCart: Int {
+        cartManager.items.first(where: { $0.product.id == product.id })?.quantity ?? 0
+    }
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -102,7 +106,7 @@ struct ProductDetailView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .font(.subheadline)
-                                Text("Similar Products")
+                                Text("Suggested Products")
                                     .font(.headline)
                             }
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -125,7 +129,7 @@ struct ProductDetailView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .font(.subheadline)
-                                Text("Similar Products")
+                                Text("Suggested Products")
                                     .font(.headline)
                             }
                             
@@ -269,19 +273,63 @@ struct ProductDetailView: View {
                 
                 Spacer()
                 
-                Button(action: {
-                    let impactMed = UIImpactFeedbackGenerator(style: .medium)
-                    impactMed.impactOccurred()
-                    cartManager.addToCart(product: product)
-                }) {
-                    Label("Add to Cart", systemImage: "cart.badge.plus")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 14)
-                        .background(Color.primary)
-                        .clipShape(Capsule())
+                if quantityInCart > 0 {
+                    // Counter UI
+                    HStack(spacing: 20) {
+                        Button(action: {
+                            let impactMed = UIImpactFeedbackGenerator(style: .medium)
+                            impactMed.impactOccurred()
+                            cartManager.removeFromCart(product: product)
+                        }) {
+                            Image(systemName: "minus")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 32, height: 32)
+                        }
+                        
+                        Text("\(quantityInCart)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .frame(minWidth: 20)
+                        
+                        Button(action: {
+                            let impactMed = UIImpactFeedbackGenerator(style: .medium)
+                            impactMed.impactOccurred()
+                            cartManager.addToCart(product: product)
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 32, height: 32)
+                        }
+                        .disabled(product.stock != nil && quantityInCart >= (product.stock ?? 0))
+                        .opacity(product.stock != nil && quantityInCart >= (product.stock ?? 0) ? 0.5 : 1.0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.primary)
+                    .clipShape(Capsule())
+                } else {
+                    // Add to Cart Button
+                    Button(action: {
+                        let impactMed = UIImpactFeedbackGenerator(style: .medium)
+                        impactMed.impactOccurred()
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            cartManager.addToCart(product: product)
+                        }
+                    }) {
+                        Label("Add to Cart", systemImage: "cart.badge.plus")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 14)
+                            .background(Color.primary)
+                            .clipShape(Capsule())
+                    }
+                    .disabled(product.stock != nil && (product.stock ?? 0) <= 0)
+                    .opacity(product.stock != nil && (product.stock ?? 0) <= 0 ? 0.5 : 1.0)
                 }
             }
             .padding(.horizontal, 20)

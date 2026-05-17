@@ -4,15 +4,33 @@ struct ProductListView: View {
     @EnvironmentObject private var viewModel: ProductViewModel
     @StateObject private var searchViewModel = SearchViewModel()
     @StateObject private var visualVM = VisualSearchViewModel()
-    
-    let columns = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
-    ]
-    
+
+    private let gridHorizontalPadding: CGFloat = 14
+    private let gridColumnSpacing: CGFloat = 14
+    private let gridRowSpacing: CGFloat = 16
+
     @State private var showProfile = false
     @State private var showFilters = false
+    @State private var personalizedRefreshToken = UUID()
     @ObservedObject private var recoEngine = RecommendationEngine.shared
+    @State private var cachedPersonalizedProducts: [Product] = []
+
+    private var productCardWidth: CGFloat {
+        let width = UIScreen.main.bounds.width
+        let availableWidth = width - (gridHorizontalPadding * 2) - gridColumnSpacing
+        return floor(availableWidth / 2)
+    }
+
+    private var productCardHeight: CGFloat {
+        productCardWidth + 86
+    }
+
+    private var productGridColumns: [GridItem] {
+        [
+            GridItem(.fixed(productCardWidth), spacing: gridColumnSpacing),
+            GridItem(.fixed(productCardWidth), spacing: gridColumnSpacing)
+        ]
+    }
     
     var categories: [String] {
         let allCategories = viewModel.products.compactMap { $0.category }
@@ -27,7 +45,7 @@ struct ProductListView: View {
         if searchViewModel.hasSearched {
             return searchViewModel.searchResults
         } else {
-            var result = viewModel.products
+            var result = cachedPersonalizedProducts.isEmpty ? viewModel.products : cachedPersonalizedProducts
             if let category = searchViewModel.selectedCategory {
                 result = result.filter { $0.category == category }
             }
@@ -218,26 +236,65 @@ struct ProductListView: View {
                                 }
                             }
                             
-                            // MARK: — AI Recommendation Carousel
-                            if !searchViewModel.hasSearched && searchViewModel.selectedCategory == nil && !recommendedProducts.isEmpty {
-                                RecommendationCarouselView(recommendedProducts: recommendedProducts)
+                            // MARK: — Horizontal Shelves (Major Ecommerce Style)
+                            if !searchViewModel.hasSearched && searchViewModel.selectedCategory == nil {
+                                
+                                let promoted = recoEngine.getPromotedProducts(from: viewModel.products)
+                                HorizontalProductShelfView(
+                                    title: "Featured Events",
+                                    systemImage: "star.fill",
+                                    products: promoted
+                                )
+                                
+                                let recent = recoEngine.getRecentlyViewedProducts(from: viewModel.products)
+                                HorizontalProductShelfView(
+                                    title: "Continue Shopping",
+                                    systemImage: "clock.arrow.circlepath",
+                                    products: recent
+                                )
+                                
+                                if !recommendedProducts.isEmpty {
+                                    HorizontalProductShelfView(
+                                        title: "Picked For You",
+                                        systemImage: "sparkles",
+                                        products: recommendedProducts,
+                                        showAIPickBadge: true
+                                    )
+                                }
+                                
+                                HStack {
+                                    Text("More to Explore")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.top, 12)
+                                .padding(.bottom, 4)
                             }
                             
                             // MARK: — Product Grid
-                            LazyVGrid(columns: columns, spacing: 16) {
+                            LazyVGrid(columns: productGridColumns, spacing: gridRowSpacing) {
                                 ForEach(displayedProducts) { product in
                                     NavigationLink(destination: ProductDetailView(product: product)) {
-                                        ProductCardView(product: product)
+                                        ProductCardView(
+                                            product: product,
+                                            width: productCardWidth,
+                                            height: productCardHeight
+                                        )
                                             .onAppear {
-                                                if product.id == displayedProducts.last?.id {
+                                                if searchViewModel.hasSearched && product.id == displayedProducts.last?.id {
                                                     searchViewModel.loadMore()
                                                 }
                                             }
                                     }
+                                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                     .buttonStyle(PlainButtonStyle())
                                 }
                             }
-                            .padding(.horizontal, 12)
+                            .id(personalizedRefreshToken)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, gridHorizontalPadding)
                             .padding(.bottom, 16)
                             
                             if searchViewModel.hasMoreResults && searchViewModel.hasSearched {
@@ -247,8 +304,7 @@ struct ProductListView: View {
                         }
                     }
                     .refreshable {
-                        await viewModel.fetchProducts()
-                        await recoEngine.fetchRecommendations()
+                        await refreshPersonalizedHome()
                     }
                     .transition(.opacity.animation(.easeIn(duration: 0.3)))
                 }
@@ -299,9 +355,21 @@ struct ProductListView: View {
             }
             .task {
                 if viewModel.products.isEmpty {
-                    await viewModel.fetchProducts()
+                    await refreshPersonalizedHome()
+                } else if cachedPersonalizedProducts.isEmpty {
+                    cachedPersonalizedProducts = recoEngine.personalize(viewModel.products)
                 }
             }
+        }
+    }
+
+    @MainActor
+    private func refreshPersonalizedHome() async {
+        await viewModel.fetchProducts()
+        await recoEngine.fetchRecommendations()
+        cachedPersonalizedProducts = recoEngine.personalize(viewModel.products)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+            personalizedRefreshToken = UUID()
         }
     }
 }
@@ -311,39 +379,12 @@ struct ProductListView: View {
 // MARK: — Product Grid Card
 struct ProductCardView: View {
     let product: Product
+    let width: CGFloat
+    let height: CGFloat
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image
-            ZStack {
-                if let imageUrlString = product.imageUrl {
-                    CachedImageView(urlString: imageUrlString) { image in
-                        GeometryReader { geo in
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: geo.size.width, height: geo.size.width)
-                                .clipped()
-                        }
-                        .aspectRatio(1, contentMode: .fit)
-                    } placeholder: {
-                        Rectangle()
-                            .fill(Color(.systemGray5))
-                            .aspectRatio(1, contentMode: .fit)
-                            .shimmer()
-                    }
-                    .id(imageUrlString)
-                } else {
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .foregroundColor(.gray)
-                        )
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 0))
+            productImage
             
             // Info
             VStack(alignment: .leading, spacing: 4) {
@@ -361,11 +402,38 @@ struct ProductCardView: View {
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(height: 80, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 82, alignment: .topLeading)
         }
+        .frame(width: width, height: height, alignment: .topLeading)
         .background(Color(UIColor.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.07), radius: 8, x: 0, y: 2)
+    }
+
+    private var productImage: some View {
+        ZStack {
+            Color(.systemGray6)
+
+            if let imageUrlString = product.imageUrl, !imageUrlString.isEmpty {
+                CachedImageView(urlString: imageUrlString) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    Rectangle()
+                        .fill(Color(.systemGray5))
+                        .shimmer()
+                }
+                .id(imageUrlString)
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: 28))
+                    .foregroundColor(.gray)
+            }
+        }
+        .frame(width: width, height: width)
+        .clipped()
     }
 }
 
