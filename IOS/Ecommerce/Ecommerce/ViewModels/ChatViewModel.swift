@@ -359,10 +359,9 @@ class ChatViewModel: ObservableObject {
                 return
             }
             let total = cartManager?.total ?? 0
-            let inr = formatINR(total)
             replaceLoading(at: loadingIndex, with: ChatMessage(
                 role: .assistant,
-                text: "Ready to checkout! Your total is \(formatPrice(total)) (~₹\(inr)). Tap the button in the Cart tab to pay via Razorpay.",
+                text: "Ready to checkout! Your total is \(formatPrice(total)). Tap the button in the Cart tab to complete your purchase.",
                 attachments: [.quickReplies(["Apply promo code", "View cart first"])]
             ))
 

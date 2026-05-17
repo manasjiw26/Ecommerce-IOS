@@ -7,11 +7,17 @@ struct BagView: View {
 
     @StateObject private var bagVM       = BagViewModel()
     @StateObject private var savedVM     = SavedForLaterViewModel()
+    @StateObject private var addressBook = AddressBookViewModel()
+    @StateObject private var occasionViewModel = OccasionViewModel()
+    @StateObject private var pairItWithVM = PairItWithViewModel()
 
     @State private var showSaved         = false
     @State private var showCheckout      = false
+    @State private var showAddressSheet  = false
     @State private var undo: UndoState?  = nil
     @State private var showExpressAlert  = false
+    @State private var showOutOfStockAlert = false
+    @State private var toastMessage: String? = nil
 
     // Promo
     @State private var promoFieldText    = ""
@@ -38,13 +44,16 @@ struct BagView: View {
     }
 
     private var canCheckout: Bool {
-        !cartManager.items.isEmpty && !hasOutOfStock && !bagVM.isCheckingStock
+        !cartManager.items.isEmpty
     }
 
     // MARK: - Body
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            Color(UIColor.systemGroupedBackground)
+                .ignoresSafeArea()
+
             Group {
                 if cartManager.items.isEmpty {
                     emptyState
@@ -54,30 +63,33 @@ struct BagView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: cartManager.items.isEmpty)
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Cart")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("Cart")
-                    .font(.headline)
-            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     showSaved = true
                 } label: {
-                    ZStack(alignment: .topTrailing) {
+                    HStack(spacing: 6) {
                         Image(systemName: "bookmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.primary)
+                        
                         if bagVM.savedCount > 0 {
                             Text("\(bagVM.savedCount)")
-                                .font(.caption2)
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.red)
-                                .clipShape(Capsule())
-                                .offset(x: 10, y: -10)
+                                .frame(width: 16, height: 16)
+                                .background(Color.black)
+                                .clipShape(Circle())
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(30)
                 }
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $showSaved) {
@@ -103,10 +115,47 @@ struct BagView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.8), value: undo != nil)
             }
         }
+        .overlay(alignment: .top) {
+            if let message = toastMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 14, weight: .bold))
+                    Text(message)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.black.opacity(0.88))
+                .clipShape(Capsule())
+                .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 3)
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(999)
+            }
+        }
         .alert("Express Checkout", isPresented: $showExpressAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("UPI express checkout is coming soon. Use the standard checkout for now.")
+        }
+        .alert("Items Out of Stock", isPresented: $showOutOfStockAlert) {
+            Button("Remove Out-of-Stock Items", role: .destructive) {
+                // Collect and remove all out of stock items
+                let outOfStockItems = cartManager.items.filter { item in
+                    let available = bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999)
+                    return available == 0
+                }
+                for item in outOfStockItems {
+                    cartManager.removeLineItem(product: item.product)
+                }
+                Task { await refreshAll() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Some items in your cart are currently out of stock. Would you like to remove them to proceed to checkout?")
         }
         .task { await refreshAll() }
         .onChange(of: cartManager.items) { _ in Task { await refreshAll() } }
@@ -126,7 +175,7 @@ struct BagView: View {
                     .font(.title3)
                     .fontWeight(.semibold)
 
-                Text("Free delivery on orders over ₹499")
+                Text("Free delivery on orders over $50")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -176,22 +225,162 @@ struct BagView: View {
 
     // MARK: - Loaded Cart
 
+    private var addressBar: some View {
+        Button {
+            showAddressSheet = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+                if let address = addressBook.selectedAddress, !address.line1.isEmpty {
+                    Text("Selected Address: \(address.fullName) - \(address.line1), \(address.city)")
+                        .font(.footnote)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                } else {
+                    Text("No address selected yet")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(Color(UIColor.systemBackground))
+            .cornerRadius(10)
+            .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var loadedCart: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                // Items
-                itemsSection
+            VStack(spacing: 16) {
+                // Address Bar on top
+                addressBar
+                    .padding(.bottom, 4)
 
-                // Promo
+                // Smart Occasion Card (AI driven)
+                if let occasion = occasionViewModel.currentOccasion {
+                    NavigationStack {
+                        NavigationLink(destination: OccasionSuggestionsView(occasion: occasion)) {
+                            OccasionCardView(occasion: occasion)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(height: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                // Items (White Card)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Items (\(cartManager.items.count))")
+                        .font(.footnote)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 4)
+                    
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(cartManager.items) { item in
+                            let available = bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999)
+                            BagItemRow(
+                                item: item,
+                                availableStock: available,
+                                onRemove: {
+                                    let name = item.product.name
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        undo = UndoState(product: item.product, quantity: item.quantity)
+                                        cartManager.removeLineItem(product: item.product)
+                                    }
+                                    withAnimation {
+                                        toastMessage = "Removed \(name)"
+                                    }
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        withAnimation {
+                                            if toastMessage == "Removed \(name)" {
+                                                toastMessage = nil
+                                            }
+                                        }
+                                    }
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                        if undo?.product.id == item.product.id {
+                                            withAnimation { undo = nil }
+                                        }
+                                    }
+                                },
+                                onSaveForLater: {
+                                    Task {
+                                        try? await SavedForLaterService.shared.save(
+                                            deviceId: RecommendationEngine.shared.deviceId,
+                                            productId: item.product.id
+                                        )
+                                        cartManager.removeLineItem(product: item.product)
+                                        await savedVM.refresh()
+                                        bagVM.savedCount = savedVM.items.count
+                                    }
+                                    withAnimation {
+                                        toastMessage = "Added to Watch List"
+                                    }
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        withAnimation {
+                                            if toastMessage == "Added to Watch List" {
+                                                toastMessage = nil
+                                            }
+                                        }
+                                    }
+                                },
+                                onDecrement: {
+                                    if item.quantity <= 1 {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                            undo = UndoState(product: item.product, quantity: 1)
+                                            cartManager.removeLineItem(product: item.product)
+                                        }
+                                        Task {
+                                            try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                            if undo?.product.id == item.product.id {
+                                                withAnimation { undo = nil }
+                                            }
+                                        }
+                                    } else {
+                                        cartManager.removeFromCart(product: item.product)
+                                    }
+                                },
+                                onIncrement: {
+                                    guard available == 0 || available >= 999 || item.quantity < available else { return }
+                                    cartManager.addToCart(product: item.product)
+                                }
+                            )
+                            .environmentObject(cartManager)
+                            .padding(.horizontal, 16)
+                            
+                            if item.id != cartManager.items.last?.id {
+                                Divider()
+                                    .padding(.leading, 92)
+                            }
+                        }
+                    }
+                    .background(Color(UIColor.systemBackground))
+                    .cornerRadius(14)
+                }
+
+                // Might We Suggest
+                PairItWithSectionView(viewModel: pairItWithVM)
+
+                // Promo (White Card)
                 promoSection
-                    .padding(.top, 8)
 
-                // Order summary
+                // Order summary (White Card)
                 orderSummarySection
-                    .padding(.top, 8)
-
-                // Bottom padding so content clears the sticky footer
-                Color.clear.frame(height: 130)
+                    .background(Color(UIColor.systemBackground))
+                    .cornerRadius(14)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -199,6 +388,68 @@ struct BagView: View {
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
             cartFooter
+        }
+        .sheet(isPresented: $showAddressSheet) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Select Delivery Address")
+                        .font(.headline)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                    
+                    if addressBook.addresses.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("No saved addresses")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        List {
+                            ForEach(addressBook.addresses) { addr in
+                                Button {
+                                    addressBook.select(addr.id)
+                                    showAddressSheet = false
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(addr.label)
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                            Text(addr.oneLine)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        if addressBook.selectedAddressId == addr.id {
+                                            Image(systemName: "checkmark")
+                                                .foregroundColor(.black)
+                                                .font(.system(size: 14, weight: .bold))
+                                        }
+                                    }
+                                    .padding(14)
+                                    .background(Color(UIColor.secondarySystemBackground).opacity(0.38))
+                                    .cornerRadius(12)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                            }
+                        }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .background(Color(UIColor.systemBackground))
+                    }
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { showAddressSheet = false }
+                    }
+                }
+                .background(Color(UIColor.systemBackground))
+            }
+            .presentationDetents([.medium])
         }
     }
 
@@ -218,9 +469,21 @@ struct BagView: View {
                     item: item,
                     availableStock: available,
                     onRemove: {
+                        let name = item.product.name
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                             undo = UndoState(product: item.product, quantity: item.quantity)
                             cartManager.removeLineItem(product: item.product)
+                        }
+                        withAnimation {
+                            toastMessage = "Removed \(name)"
+                        }
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            withAnimation {
+                                if toastMessage == "Removed \(name)" {
+                                    toastMessage = nil
+                                }
+                            }
                         }
                         Task {
                             try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -238,6 +501,17 @@ struct BagView: View {
                             cartManager.removeLineItem(product: item.product)
                             await savedVM.refresh()
                             bagVM.savedCount = savedVM.items.count
+                        }
+                        withAnimation {
+                            toastMessage = "Added to Watch List"
+                        }
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            withAnimation {
+                                if toastMessage == "Added to Watch List" {
+                                    toastMessage = nil
+                                }
+                            }
                         }
                     },
                     onDecrement: {
@@ -269,10 +543,7 @@ struct BagView: View {
                 }
             }
         }
-        .padding(16)
-        .background(Color(UIColor.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Promo Section
@@ -305,9 +576,9 @@ struct BagView: View {
                 }
                 .padding(14)
                 .background(Color.green.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(Color.green.opacity(0.3), lineWidth: 1)
                 )
             } else {
@@ -371,8 +642,7 @@ struct BagView: View {
                     }
                 }
                 .background(Color(UIColor.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
+                .cornerRadius(14)
             }
         }
     }
@@ -386,10 +656,15 @@ struct BagView: View {
 
             if discount > 0, let code = cartManager.appliedPromoCode {
                 summaryRow(label: "Promo (\(code))", value: "−\(formatPrice(discount))", valueColor: .green)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.95).combined(with: .opacity),
+                        removal: .opacity
+                    ))
                 Divider().padding(.horizontal, 14)
+                    .transition(.opacity)
             }
 
-            summaryRow(label: "Shipping", value: subtotal >= 499 ? "Free" : "₹49", valueColor: subtotal >= 499 ? .green : .primary)
+            summaryRow(label: "Shipping", value: subtotal >= 50 ? "Free" : "$5.00", valueColor: subtotal >= 50 ? .green : .primary)
             Divider().padding(.horizontal, 14)
 
             HStack {
@@ -397,16 +672,14 @@ struct BagView: View {
                     .font(.subheadline)
                     .fontWeight(.bold)
                 Spacer()
-                Text(formatPrice(grandTotal + (subtotal < 499 ? 49 : 0)))
+                Text(formatPrice(grandTotal + (subtotal < 50 ? 5 : 0)))
                     .font(.subheadline)
                     .fontWeight(.bold)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
         }
-        .background(Color(UIColor.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -428,51 +701,37 @@ struct BagView: View {
 
     private var cartFooter: some View {
         VStack(spacing: 0) {
-            // Out-of-stock warning banner
-            if hasOutOfStock {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .font(.subheadline)
-                    Text("Some items are out of stock. Remove them to continue.")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color.orange.opacity(0.1))
-            }
-
             Divider()
 
             VStack(spacing: 10) {
                 // Express checkout row
-                HStack(spacing: 12) {
-                    Text("Express")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    ForEach(["UPI", "GPay", "PhonePe"], id: \.self) { method in
-                        Button {
-                            showExpressAlert = true
-                        } label: {
-                            Text(method)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
+//                HStack(spacing: 12) {
+//                    Text("Express")
+//                        .font(.caption)
+//                        .foregroundColor(.secondary)
+//                    Spacer()
+//                    ForEach(["UPI", "GPay", "PhonePe"], id: \.self) { method in
+//                        Button {
+//                            showExpressAlert = true
+//                        } label: {
+//                            Text(method)
+//                                .font(.caption)
+//                                .fontWeight(.semibold)
+//                                .padding(.horizontal, 12)
+//                                .padding(.vertical, 6)
+//                                .background(Color(UIColor.secondarySystemGroupedBackground))
+//                                .clipShape(Capsule())
+//                        }
+//                        .buttonStyle(.plain)
+//                    }
+//                }
+//                .padding(.horizontal, 16)
 
                 // Primary CTA
                 Button {
-                    if UserDefaults.standard.bool(forKey: "isLoggedIn") {
+                    if hasOutOfStock {
+                        showOutOfStockAlert = true
+                    } else if UserDefaults.standard.bool(forKey: "isLoggedIn") {
                         showCheckout = true
                     } else {
                         NotificationCenter.default.post(name: .requireAuth, object: nil)
@@ -483,20 +742,19 @@ struct BagView: View {
                             ProgressView()
                                 .tint(.white)
                         } else {
-                            Text(canCheckout
-                                 ? "Checkout · \(formatPrice(grandTotal + (subtotal < 499 ? 49 : 0)))"
-                                 : hasOutOfStock ? "Fix items to continue" : "Checking stock…")
+                            Text("Checkout · \(formatPrice(grandTotal + (subtotal < 50 ? 5 : 0)))")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                         }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(canCheckout ? Color.primary : Color.secondary.opacity(0.4))
-                    .foregroundColor(Color(UIColor.systemBackground))
+                    .background(hasOutOfStock ? Color.gray.opacity(0.6) : Color.black)
+                    .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .disabled(!canCheckout)
+                .buttonStyle(.plain)
+                .disabled(bagVM.isCheckingStock || cartManager.items.isEmpty)
                 .padding(.horizontal, 16)
             }
             .padding(.top, 10)
@@ -508,21 +766,35 @@ struct BagView: View {
     // MARK: - Helpers
 
     private func formatPrice(_ value: Double) -> String {
-        "₹\(String(format: "%.0f", value))"
+        "$\(String(format: "%.2f", value))"
     }
 
     private func applyPromo() {
         promoApplying = true
         promoError = nil
-        let error = cartManager.applyPromo(code: promoFieldText)
-        withAnimation(.easeInOut(duration: 0.2)) {
-            promoError = error
-            if error == nil {
-                promoExpanded = false
-                promoFieldText = ""
+        
+        Task {
+            let error = await cartManager.applyPromo(code: promoFieldText)
+            
+            await MainActor.run {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                    promoError = error
+                    if error == nil {
+                        promoExpanded = false
+                        promoFieldText = ""
+                        toastMessage = "Promo Applied Successfully!"
+                    }
+                }
+                
+                // Clear toast after 2.5 seconds
+                if error == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        withAnimation { toastMessage = nil }
+                    }
+                }
+                promoApplying = false
             }
         }
-        promoApplying = false
     }
 
     // MARK: - Refresh
@@ -531,6 +803,9 @@ struct BagView: View {
         await savedVM.refresh()
         bagVM.savedCount = savedVM.items.count
         await bagVM.refreshStock(items: cartManager.items)
+        await addressBook.fetchAddressFromBackend()
+        occasionViewModel.detectOccasion(from: cartManager.items)
+        pairItWithVM.fetchRecommendations(cartItems: cartManager.items)
     }
 }
 
@@ -585,7 +860,7 @@ private struct BagItemRow: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("₹\(String(format: "%.0f", item.product.price))")
+                    Text("$\(String(format: "%.2f", item.product.price))")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
@@ -594,13 +869,13 @@ private struct BagItemRow: View {
                 Spacer()
 
                 // Quantity stepper
-                HStack(spacing: 4) {
+                HStack(spacing: 12) {
                     Button(action: onDecrement) {
-                        Image(systemName: item.quantity <= 1 ? "trash" : "minus")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(item.quantity <= 1 ? .red : .primary)
-                            .frame(width: 30, height: 30)
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                        Image(systemName: "minus")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(Color.black)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -608,16 +883,16 @@ private struct BagItemRow: View {
                     Text("\(item.quantity)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .frame(minWidth: 22)
+                        .frame(minWidth: 16)
                         .multilineTextAlignment(.center)
                         .foregroundColor(exceedsStock ? .red : .primary)
 
                     Button(action: onIncrement) {
                         Image(systemName: "plus")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(canIncrement ? .primary : .secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(canIncrement ? Color.black : Color.black.opacity(0.4))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -627,32 +902,33 @@ private struct BagItemRow: View {
 
             // Stock warning pill + inline actions
             if exceedsStock || isOutOfStock {
-                HStack(spacing: 8) {
-                    Label(
-                        isOutOfStock ? "Out of stock" : "Only \(availableStock) left",
-                        systemImage: "exclamationmark.circle.fill"
-                    )
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.orange)
-                    .accessibilityAddTraits(.isStaticText)
-                    .accessibilityLabel(isOutOfStock ? "Out of stock" : "Only \(availableStock) left")
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Text(isOutOfStock ? "Out of stock" : "Only \(availableStock) left")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
 
                     Spacer()
 
                     Button("Remove") { onRemove() }
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.red)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.primary)
+
+                    Text("|")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.4))
 
                     Button("Notify Me") { onSaveForLater() }
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.accentColor)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.orange.opacity(0.08))
+                .background(Color(UIColor.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
         }

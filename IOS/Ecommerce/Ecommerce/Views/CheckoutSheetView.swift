@@ -36,14 +36,14 @@ struct CheckoutSheetView: View {
 
     enum ShippingSpeed: String, CaseIterable, Identifiable {
         case standard  = "Standard · Free"
-        case express   = "Express · ₹149"
-        case overnight = "Next Day · ₹299"
+        case express   = "Express · $15"
+        case overnight = "Next Day · $30"
         var id: String { rawValue }
         var fee: Double {
             switch self {
             case .standard: return 0
-            case .express: return 149
-            case .overnight: return 299
+            case .express: return 15
+            case .overnight: return 30
             }
         }
     }
@@ -69,7 +69,7 @@ struct CheckoutSheetView: View {
     private var grandTotal: Double {
         max(0, itemsSubtotal - discount) + addOnTotal + shippingSpeed.fee
     }
-    private func fmt(_ v: Double) -> String { "₹\(String(format: "%.0f", v))" }
+    private func fmt(_ v: Double) -> String { "$\(String(format: "%.2f", v))" }
 
     private var addressValid: Bool {
         !address1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -208,7 +208,7 @@ struct CheckoutSheetView: View {
                         } label: {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: addressBook.selectedAddressId == addr.id ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(addressBook.selectedAddressId == addr.id ? .accentColor : .secondary)
+                                    .foregroundColor(addressBook.selectedAddressId == addr.id ? .primary : .secondary)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(addr.label).font(.subheadline).fontWeight(.semibold)
                                     Text(addr.oneLine).font(.footnote).foregroundColor(.secondary)
@@ -239,7 +239,7 @@ struct CheckoutSheetView: View {
                             NotificationCenter.default.post(name: .requireAuth, object: nil)
                         }
                         .font(.footnote)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.primary)
                     }
                     .padding(.bottom, 4)
                 }
@@ -260,16 +260,11 @@ struct CheckoutSheetView: View {
                         Divider().padding(.leading, 14)
                         LabeledTextField("Address Line 2 (optional)", text: $address2)
                         Divider().padding(.leading, 14)
-                        HStack(spacing: 0) {
-                            TextField("City", text: $city)
-                                .padding(14).font(.subheadline)
-                            Divider().frame(height: 44)
-                            TextField("State", text: $state)
-                                .padding(14).font(.subheadline)
-                            Divider().frame(height: 44)
-                            TextField("PIN", text: $zip).keyboardType(.numberPad)
-                                .padding(14).font(.subheadline)
-                        }
+                        LabeledTextField("City", text: $city, contentType: .addressCity)
+                        Divider().padding(.leading, 14)
+                        LabeledTextField("State", text: $state, contentType: .addressState)
+                        Divider().padding(.leading, 14)
+                        LabeledTextField("PIN", text: $zip, keyboardType: .numberPad)
                     }
                 }
             }
@@ -406,6 +401,7 @@ struct CheckoutSheetView: View {
                     .font(.subheadline).foregroundColor(.secondary)
                 Text(shippingSpeed.rawValue).font(.caption).foregroundColor(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .background(Color(UIColor.systemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -415,6 +411,7 @@ struct CheckoutSheetView: View {
                 Text("Payment").font(.footnote).fontWeight(.semibold).foregroundColor(.secondary)
                 Text(paymentMethod.rawValue).font(.subheadline)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .background(Color(UIColor.systemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -470,6 +467,8 @@ struct CheckoutSheetView: View {
         VStack(spacing: 0) {
             Divider()
             Button {
+                // Safeguard validations inside action to keep button 100% opaque black
+                guard !((step == .address && !addressValid) || isPlacing) else { return }
                 handleCTA()
             } label: {
                 Group {
@@ -484,12 +483,11 @@ struct CheckoutSheetView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
-                .background((step == .address && !addressValid) || isPlacing
-                             ? Color.secondary.opacity(0.4) : Color.primary)
-                .foregroundColor(Color(UIColor.systemBackground))
+                .background(Color.black)
+                .foregroundColor(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
-            .disabled((step == .address && !addressValid) || isPlacing)
+            .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(.ultraThinMaterial)

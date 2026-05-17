@@ -298,21 +298,24 @@ struct ProductDetailView: View {
                 
                 Spacer()
                 
+                let isOutOfStock = product.stock == 0
                 Button(action: {
+                    guard !isOutOfStock else { return }
                     let impactMed = UIImpactFeedbackGenerator(style: .medium)
                     impactMed.impactOccurred()
                     cartManager.addToCart(product: product)
                     NotificationCenter.default.post(name: .addedToCart, object: product)
                 }) {
-                    Label("Add to Cart", systemImage: "cart.badge.plus")
+                    Label(isOutOfStock ? "Out of Stock" : "Add to Cart", systemImage: isOutOfStock ? "cart.badge.minus" : "cart.badge.plus")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.white)
+                        .foregroundColor(isOutOfStock ? .secondary : .white)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 14)
-                        .background(Color.primary)
+                        .background(isOutOfStock ? Color.gray.opacity(0.3) : Color.primary)
                         .clipShape(Capsule())
                 }
+                .disabled(isOutOfStock)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)

@@ -307,11 +307,11 @@ private struct CheckoutDetailsStep: View {
                     Text("Continue to Payment")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glass)
                 .disabled(addressLine1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || city.isEmpty || zip.isEmpty)
             }
             .padding()
-            .background(.ultraThinMaterial)
+            .background(.black)
         }
     }
 }

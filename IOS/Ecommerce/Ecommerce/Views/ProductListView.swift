@@ -344,8 +344,18 @@ struct ProductCardView: View {
                         .overlay(Image(systemName: "photo").foregroundColor(.gray))
                 }
 
+                if product.stock == 0 {
+                    Color.black.opacity(0.4)
+                        .overlay(
+                            Text("OUT OF STOCK")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                        )
+                }
+
                 // Quick-add button
                 Button {
+                    guard product.stock ?? 0 > 0 else { return }
                     let impact = UIImpactFeedbackGenerator(style: .light)
                     impact.impactOccurred()
                     cartManager.addToCart(product: product)
@@ -357,18 +367,19 @@ struct ProductCardView: View {
                         withAnimation { addedToCart = false }
                     }
                 } label: {
-                    Image(systemName: addedToCart ? "checkmark" : "plus")
+                    Image(systemName: addedToCart ? "checkmark" : (product.stock == 0 ? "xmark" : "plus"))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .frame(width: 30, height: 30)
-                        .background(addedToCart ? Color.green : Color.black.opacity(0.78))
+                        .background(addedToCart ? Color.green : (product.stock == 0 ? Color.gray.opacity(0.4) : Color.black.opacity(0.78)))
                         .clipShape(Circle())
                         .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
                 }
                 .padding(8)
                 .buttonStyle(PlainButtonStyle())
+                .disabled(product.stock == 0)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 0))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
             // Info
             VStack(alignment: .leading, spacing: 4) {
@@ -379,7 +390,7 @@ struct ProductCardView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
 
-                Text("₹\(String(format: "%.0f", product.price))")
+                Text("$\(String(format: "%.2f", product.price))")
                     .font(.caption)
                     .foregroundColor(.secondary)
 

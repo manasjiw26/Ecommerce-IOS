@@ -37,27 +37,35 @@ class CartManager: ObservableObject {
 
     /// Validates and applies a promo code. Returns an error message if invalid, nil on success.
     @discardableResult
-    func applyPromo(code: String) -> String? {
+    func applyPromo(code: String) async -> String? {
         let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        // Mock promo codes for demo — replace with a backend call when ready.
-        let validCodes: [String: Double] = [
-            "SAVE10": 10.0,
-            "SAVE20": 20.0,
-            "FIRST15": 15.0,
-            "WS25": 25.0
-        ]
-        if let discount = validCodes[normalized] {
-            appliedPromoCode = normalized
-            promoDiscountPercent = discount
+        do {
+            let res = try await APIService.shared.applyPromo(code: normalized)
+            let discountPercent = res.promo.discount_pct ?? 0.0
+            
+            await MainActor.run {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                    self.appliedPromoCode = normalized
+                    self.promoDiscountPercent = Double(discountPercent)
+                }
+            }
             return nil
-        } else {
-            return "Invalid or expired promo code."
+        } catch {
+            await MainActor.run {
+                withAnimation {
+                    self.appliedPromoCode = nil
+                    self.promoDiscountPercent = 0.0
+                }
+            }
+            return error.localizedDescription
         }
     }
 
     func removePromo() {
-        appliedPromoCode = nil
-        promoDiscountPercent = 0.0
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+            appliedPromoCode = nil
+            promoDiscountPercent = 0.0
+        }
     }
 
     init() {

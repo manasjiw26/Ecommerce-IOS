@@ -78,4 +78,35 @@ class APIService {
             throw URLError(.badServerResponse)
         }
     }
+    
+    // MARK: - Promotions
+    
+    struct PromoResponse: Codable {
+        struct PromoDetails: Codable {
+            let code: String
+            let discount_pct: Double?
+            let discount_fixed: Double?
+        }
+        let promo: PromoDetails
+    }
+    
+    func applyPromo(code: String) async throws -> PromoResponse {
+        guard let url = URL(string: "\(APIService.baseURL)/chat/promotions/apply") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "code": code
+        ])
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            throw NSError(domain: "Promo", code: (response as? HTTPURLResponse)?.statusCode ?? 400,
+                          userInfo: [NSLocalizedDescriptionKey: msg ?? "Invalid or expired promo code."])
+        }
+        return try JSONDecoder().decode(PromoResponse.self, from: data)
+    }
 }
