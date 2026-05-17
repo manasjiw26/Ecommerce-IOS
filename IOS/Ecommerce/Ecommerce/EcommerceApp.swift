@@ -2,65 +2,45 @@ import SwiftUI
 
 @main
 struct EcommerceApp: App {
-    @StateObject private var cartManager = CartManager()
+
+    // MARK: - Global state objects
+    @StateObject private var cartManager    = CartManager()
     @StateObject private var productViewModel = ProductViewModel()
-    @StateObject private var aiPresence = AIPresenceManager()
-    @State private var isLoggedIn: Bool = UserDefaults.standard.bool(forKey: "isLoggedIn")
-    @State private var showLogin = false
-    @State private var showSignUp = false
-    @State private var showOnboarding = false
+    @StateObject private var aiPresence     = AIPresenceManager()
+    @StateObject private var savedVM        = SavedForLaterViewModel()
+    @StateObject private var addressBook    = AddressBookViewModel()
+    @StateObject private var authSession    = AuthSession.shared
+
+    // MARK: - Splash
+    @State private var splashDone = false
 
     var body: some Scene {
         WindowGroup {
             ZStack {
-                // Always show main app — products visible to all
-                ContentView()
-                    .environmentObject(cartManager)
-                    .environmentObject(productViewModel)
-                    .environmentObject(AuthSession.shared)
-                    .environmentObject(aiPresence)
-
-                // Onboarding overlays on top when triggered
-                if showSignUp {
-                    SignUpView(
-                        onSignUpSuccess: {
-                            withAnimation { isLoggedIn = true; showSignUp = false; showOnboarding = false }
-                        },
-                        onBack: { withAnimation { showSignUp = false } }
-                    )
-                    .transition(.move(edge: .trailing))
-                    .zIndex(3)
-                } else if showLogin {
-                    LoginView(
-                        onLoginSuccess: {
-                            withAnimation { isLoggedIn = true; showLogin = false; showOnboarding = false }
-                        },
-                        onBack: { withAnimation { showLogin = false } }
-                    )
-                    .transition(.move(edge: .trailing))
-                    .zIndex(2)
-                } else if showOnboarding {
-                    OnboardingView(
-                        onLogin: { withAnimation { showLogin = true } },
-                        onSignUp: { withAnimation { showSignUp = true } }
-                    )
-                    .transition(.opacity)
-                    .zIndex(1)
+                if splashDone {
+                    // ── Main app — always visible, guest or signed-in ──
+                    ContentView()
+                        .environmentObject(cartManager)
+                        .environmentObject(productViewModel)
+                        .environmentObject(authSession)
+                        .environmentObject(aiPresence)
+                        .environmentObject(savedVM)
+                        .environmentObject(addressBook)
+                        .transition(.opacity)
+                } else {
+                    // ── Splash screen ──
+                    SplashScreenView()
+                        .transition(.opacity)
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                                withAnimation(.easeInOut(duration: 0.5)) {
+                                    splashDone = true
+                                }
+                            }
+                        }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .userDidLogout)) { _ in
-                withAnimation {
-                    isLoggedIn = false
-                    showLogin = false
-                    showSignUp = false
-                    showOnboarding = true
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .requireAuth)) { _ in
-                if !isLoggedIn {
-                    withAnimation { showOnboarding = true }
-                }
-            }
+            // Deep-link: registry share token
             .onOpenURL { url in
                 if url.pathComponents.contains("r"), let token = url.pathComponents.last {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -72,9 +52,10 @@ struct EcommerceApp: App {
     }
 }
 
-extension Notification.Name {
-    static let userDidLogout = Notification.Name("userDidLogout")
-    static let requireAuth   = Notification.Name("requireAuth")
-    static let openRegistryToken = Notification.Name("openRegistryToken")
-}
+// MARK: - Notification names
 
+extension Notification.Name {
+    static let userDidLogout      = Notification.Name("userDidLogout")
+    static let requireAuth        = Notification.Name("requireAuth")
+    static let openRegistryToken  = Notification.Name("openRegistryToken")
+}

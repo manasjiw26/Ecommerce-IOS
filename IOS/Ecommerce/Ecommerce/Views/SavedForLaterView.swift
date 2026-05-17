@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SavedForLaterView: View {
     @EnvironmentObject var cartManager: CartManager
-    @StateObject var vm: SavedForLaterViewModel
+    @EnvironmentObject var vm: SavedForLaterViewModel
 
     @State private var showOOSAlert = false
     @State private var selectedOOSProduct: Product? = nil

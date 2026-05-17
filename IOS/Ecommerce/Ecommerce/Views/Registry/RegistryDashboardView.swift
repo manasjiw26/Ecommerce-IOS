@@ -1046,10 +1046,45 @@ struct RegistryItemRow: View {
                             }
                         }
                     }
-                    
-                    Text("Requested: \(item.quantityRequested) | Received: \(item.quantityReceived)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    if MockRegistryService.shared.registries.first(where: { $0.id == registryId })?.isOwner == true {
+                        HStack(spacing: 8) {
+                            Stepper(value: Binding(
+                                get: { item.quantityRequested },
+                                set: { newValue in
+                                    Task {
+                                        do {
+                                            _ = try await RegistryService.shared.updateRegistryItem(
+                                                registryId: registryId,
+                                                itemId: item.id,
+                                                updates: ["quantity_requested": newValue]
+                                            )
+                                            try await MockRegistryService.shared.fetchRegistryDashboard(registryId: registryId)
+                                            await MainActor.run {
+                                                onTagUpdate()
+                                            }
+                                        } catch {
+                                            print("Error updating quantity: \(error)")
+                                        }
+                                    }
+                                }
+                            ), in: 1...100) {
+                                Text("Desired Qty: \(item.quantityRequested)")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+                            .fixedSize()
+                            
+                            Text("| Received: \(item.quantityReceived)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 2)
+                    } else {
+                        Text("Requested: \(item.quantityRequested) | Received: \(item.quantityReceived)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
 
                     let isGroupGift = item.isGroupGift ?? (product.price >= 150.0)
                     if isGroupGift && item.quantityRequested > 0 && !isFullyGifted {
@@ -1244,32 +1279,34 @@ struct RegistryShareSheetView: View {
             }
 
             // Share Code Display Box
-            HStack(spacing: 12) {
-                Text(shareCode.isEmpty ? fallbackCode : shareCode)
-                    .font(.system(size: 26, weight: .bold, design: .serif))
-                    .tracking(2)
-                    .foregroundColor(.primary)
-                    .textSelection(.enabled)
+            Button(action: {
+                let codeToCopy = shareCode.isEmpty ? fallbackCode : shareCode
+                UIPasteboard.general.string = codeToCopy
+                let impact = UINotificationFeedbackGenerator()
+                impact.notificationOccurred(.success)
+                withAnimation { copied = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+            }) {
+                HStack(spacing: 12) {
+                    Text(shareCode.isEmpty ? fallbackCode : shareCode)
+                        .font(.system(size: 26, weight: .bold, design: .serif))
+                        .tracking(2)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
 
-                Button(action: {
-                    let codeToCopy = shareCode.isEmpty ? fallbackCode : shareCode
-                    UIPasteboard.general.string = codeToCopy
-                    let impact = UINotificationFeedbackGenerator()
-                    impact.notificationOccurred(.success)
-                    withAnimation { copied = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
-                }) {
                     Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
                         .font(.body)
                         .foregroundColor(copied ? .green : .primary)
                 }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
+                )
             }
-            .padding(.vertical, 14)
-            .padding(.horizontal, 24)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
-            )
+            .buttonStyle(.plain)
 
             if !shareUrl.isEmpty {
                 VStack(spacing: 8) {
@@ -1277,33 +1314,35 @@ struct RegistryShareSheetView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    HStack(spacing: 12) {
-                        Text(shareUrl)
-                            .font(.footnote)
-                            .foregroundColor(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .textSelection(.enabled)
+                    Button(action: {
+                        UIPasteboard.general.string = shareUrl
+                        let impact = UINotificationFeedbackGenerator()
+                        impact.notificationOccurred(.success)
+                        withAnimation { copiedLink = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedLink = false }
+                    }) {
+                        HStack(spacing: 12) {
+                            Text(shareUrl)
+                                .font(.footnote)
+                                .foregroundColor(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            
+                            Spacer()
 
-                        Button(action: {
-                            UIPasteboard.general.string = shareUrl
-                            let impact = UINotificationFeedbackGenerator()
-                            impact.notificationOccurred(.success)
-                            withAnimation { copiedLink = true }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedLink = false }
-                        }) {
                             Image(systemName: copiedLink ? "checkmark.circle.fill" : "link")
                                 .font(.body)
                                 .foregroundColor(copiedLink ? .green : .primary)
                         }
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
+                        )
+                        .padding(.horizontal, 24)
                     }
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 1.5)
-                    )
-                    .padding(.horizontal, 24)
+                    .buttonStyle(.plain)
                 }
             }
 

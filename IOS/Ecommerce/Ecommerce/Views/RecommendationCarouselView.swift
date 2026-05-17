@@ -6,9 +6,9 @@ struct RecommendationCarouselView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.subheadline)
-                    .foregroundColor(.primary)
+//                Image(systemName: "sparkles")
+//                    .font(.subheadline)
+//                    .foregroundColor(.primary)
                 Text("Picked For You")
                     .font(.headline)
                     .fontWeight(.bold)

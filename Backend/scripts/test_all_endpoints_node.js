@@ -11,6 +11,9 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const DEVICE_ID = process.env.DEVICE_ID || 'demo-device-001';
 let REGISTRY_ID = process.env.REGISTRY_ID || '';
 
+let token = '';
+let userId = '00000000-0000-0000-0000-000000000001';
+
 function fail(name, msg) {
     console.error(`FAIL: ${name}${msg ? ` — ${msg}` : ''}`);
     process.exitCode = 1;
@@ -20,7 +23,11 @@ function pass(name) {
 }
 
 async function getJson(path) {
-    const r = await fetch(`${BASE_URL}${path}`);
+    const headers = {};
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const r = await fetch(`${BASE_URL}${path}`, { headers });
     const t = await r.text();
     let j = null;
     try { j = JSON.parse(t); } catch (_) {}
@@ -28,9 +35,13 @@ async function getJson(path) {
 }
 
 async function postJson(path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
     const r = await fetch(`${BASE_URL}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
     });
     const t = await r.text();
@@ -40,9 +51,13 @@ async function postJson(path, body) {
 }
 
 async function delJson(path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
     const r = await fetch(`${BASE_URL}${path}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
     });
     const t = await r.text();
@@ -61,6 +76,34 @@ async function main() {
         pass('/health');
     }
 
+    // AUTH SIGNUP / LOGIN TEST to obtain authentic Supabase token
+    {
+        const testEmail = `test_${Date.now()}_${Math.floor(Math.random() * 10000)}@example.com`;
+        const signupRes = await postJson('/auth/signup', {
+            email: testEmail,
+            password: 'Password123!',
+            name: 'E2E Test Runner User'
+        });
+        if (signupRes.ok && signupRes.json?.access_token) {
+            token = signupRes.json.access_token;
+            userId = signupRes.json.user.id;
+            pass(`Auth Signup & Session Retrieval: Successful (User ID: ${userId})`);
+        } else {
+            console.warn('⚠️ Signup failed or did not return token immediately, attempting login fallback...');
+            const loginRes = await postJson('/auth/login', {
+                email: 'test@example.com',
+                password: 'Password123!'
+            });
+            if (loginRes.ok && loginRes.json?.access_token) {
+                token = loginRes.json.access_token;
+                userId = loginRes.json.user.id;
+                pass(`Auth Login Fallback: Successful (User ID: ${userId})`);
+            } else {
+                return fail('Auth / JWT token retrieval failed', `Signup: ${signupRes.text}. Login: ${loginRes.text}`);
+            }
+        }
+    }
+
     // /products
     const productsRes = await getJson('/products');
     if (!productsRes.ok || !Array.isArray(productsRes.json) || !productsRes.json.length) return fail('/products', productsRes.text);
@@ -71,13 +114,12 @@ async function main() {
     // Create registry if not provided
     if (!REGISTRY_ID) {
         const create = await postJson('/registry', {
-            user_id: '00000000-0000-0000-0000-000000000001',
             event_type: 'Wedding',
             event_date: '2030-01-01',
             event_location: 'Test Registry',
             is_public: true
         });
-        if (!create.ok || !create.json?.id) return fail('POST /registry', create.text);
+        if (!create.ok || !create.json?.id) return fail('POST /registry (Authenticated)', create.text);
         REGISTRY_ID = create.json.id;
     }
     pass(`registry id ready (${REGISTRY_ID})`);
@@ -133,7 +175,7 @@ async function main() {
         pass('GET /registry/:id/collaborators');
     }
 
-    // Share link (public may fail if DB lacks share_token column; this verifies endpoint only)
+    // Share link
     {
         const s = await getJson(`/registry/${REGISTRY_ID}/share-link`);
         if (!s.ok || !s.json?.share_token) return fail('GET /registry/:id/share-link', s.text);
@@ -181,4 +223,3 @@ main().catch((e) => {
     console.error('FAIL: runner error —', e.message);
     process.exit(1);
 });
-

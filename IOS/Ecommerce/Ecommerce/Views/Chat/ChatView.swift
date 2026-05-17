@@ -9,9 +9,8 @@ struct ChatView: View {
     @EnvironmentObject var productViewModel: ProductViewModel
     @EnvironmentObject var aiPresence: AIPresenceManager
     @Environment(\.dismiss) var dismiss
-    @State private var scrollProxy: ScrollViewProxy? = nil
     @State private var placeholderIndex = 0
-    
+
     private let placeholders = [
         "Ask me anything…",
         "Looking for a gift idea?",
@@ -31,24 +30,34 @@ struct ChatView: View {
                                 ChatBubble(message: message, viewModel: viewModel)
                                     .id(message.id)
                             }
+                            // Invisible bottom anchor — always rendered last
                             Color.clear
                                 .frame(height: 1)
                                 .id("BOTTOM")
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 16)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onAppear { scrollProxy = proxy }
+                    // New message added
                     .onChange(of: viewModel.messages.count) { _, _ in
                         scrollToBottom(proxy: proxy)
                     }
+                    // Loading spinner appears/disappears
                     .onChange(of: viewModel.isLoading) { _, _ in
                         scrollToBottom(proxy: proxy)
                     }
+                    // Last message text grows (TypewriterText ticks)
+                    .onChange(of: viewModel.messages.last?.text) { _, _ in
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
+                    .onAppear {
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
                 }
 
-                // Quick Replies (Recommended Prompts)
+                // Quick Replies
                 if let lastMessage = viewModel.messages.last,
                    !lastMessage.isLoading {
                     ForEach(Array(lastMessage.attachments.enumerated()), id: \.offset) { _, attachment in
@@ -75,7 +84,10 @@ struct ChatView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { viewModel.messages.removeAll(); viewModel.sendWelcomeMessage() }) {
+                    Button(action: {
+                        viewModel.messages.removeAll()
+                        viewModel.sendWelcomeMessage()
+                    }) {
                         Image(systemName: "arrow.counterclockwise")
                     }
                 }
@@ -88,8 +100,8 @@ struct ChatView: View {
                 viewModel.sendWelcomeMessage(withBubbleContext: initialBubbleMessage)
                 aiPresence.isAIActive = true
                 aiPresence.dismissBubble()
-                
-                // Cycle placeholder
+
+                // Cycle placeholder text
                 Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
                     Task { @MainActor in
                         placeholderIndex = (placeholderIndex + 1) % placeholders.count
@@ -101,14 +113,25 @@ struct ChatView: View {
             }
         }
     }
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        DispatchQueue.main.async {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+
+    /// Scrolls to the bottom anchor.
+    /// - `animated: true`  → smooth spring (used when a full new message arrives)
+    /// - `animated: false` → instant jump  (used while TypewriterText is ticking)
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
+        // Task @MainActor guarantees we run *after* SwiftUI finishes its current
+        // layout pass, so the scroll target height is already correct.
+        Task { @MainActor in
+            if animated {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
+                }
+            } else {
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
             }
         }
     }
 }
+
 
 // MARK: - Input Bar
 struct ChatInputBar: View {

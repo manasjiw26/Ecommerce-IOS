@@ -2,6 +2,7 @@ import Foundation
 import Combine
 
 // MARK: - Auth Models
+
 struct AuthUser: Codable {
     let id: String
     let email: String
@@ -18,53 +19,71 @@ struct AuthError: Codable {
 }
 
 // MARK: - Auth Session (singleton)
+
+/// Manages the current authentication state.
+/// The app always starts in "guest" mode (`currentUser == nil`).
+/// A user is considered a guest whenever `isGuest` is `true`.
 class AuthSession: ObservableObject {
     static let shared = AuthSession()
 
     @Published var currentUser: AuthUser? = nil
     @Published var accessToken: String? = nil
 
-    private let userKey = "auth_user"
+    private let userKey  = "auth_user"
     private let tokenKey = "auth_token"
 
+    /// `true` when no real account is signed in.
+    var isGuest: Bool { currentUser == nil }
+
     init() {
-        load()
+        loadPersistedSession()
     }
 
+    // MARK: Persist a real authenticated session
+
     func save(user: AuthUser, token: String?) {
-        currentUser = user
-        accessToken = token
+        currentUser  = user
+        accessToken  = token
+
         if let encoded = try? JSONEncoder().encode(user) {
             UserDefaults.standard.set(encoded, forKey: userKey)
         }
         if let token = token {
             UserDefaults.standard.set(token, forKey: tokenKey)
         }
-        UserDefaults.standard.set(true, forKey: "isLoggedIn")
         UserDefaults.standard.set(user.email, forKey: "userEmail")
         UserDefaults.standard.set(user.name ?? "", forKey: "userName")
     }
 
-    func clear() {
-        currentUser = nil
-        accessToken = nil
+    // MARK: Sign out → back to guest (no forced onboarding)
+
+    func signOut() {
+        currentUser  = nil
+        accessToken  = nil
         UserDefaults.standard.removeObject(forKey: userKey)
         UserDefaults.standard.removeObject(forKey: tokenKey)
-        UserDefaults.standard.set(false, forKey: "isLoggedIn")
         UserDefaults.standard.removeObject(forKey: "userEmail")
         UserDefaults.standard.removeObject(forKey: "userName")
+
+        // Post logout notification so any listening view can react
+        NotificationCenter.default.post(name: .userDidLogout, object: nil)
     }
 
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: userKey),
-           let user = try? JSONDecoder().decode(AuthUser.self, from: data) {
-            currentUser = user
-            accessToken = UserDefaults.standard.string(forKey: tokenKey)
+    // MARK: Private helpers
+
+    private func loadPersistedSession() {
+        guard let data = UserDefaults.standard.data(forKey: userKey),
+              let user = try? JSONDecoder().decode(AuthUser.self, from: data) else {
+            // No session stored → stay as guest
+            return
         }
+        currentUser = user
+        accessToken = UserDefaults.standard.string(forKey: tokenKey)
     }
 }
 
-// MARK: - Auth Service
+// MARK: - Auth Service (network calls)
+
 class AuthService {
     static let shared = AuthService()
     private let baseURL = APIService.baseURL
@@ -84,11 +103,14 @@ class AuthService {
 
         if http.statusCode != 200 {
             let errObj = try? JSONDecoder().decode(AuthError.self, from: data)
-            throw NSError(domain: "Auth", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: errObj?.error ?? "Sign up failed"])
+            throw NSError(domain: "Auth", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: errObj?.error ?? "Sign up failed"])
         }
 
         let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
-        AuthSession.shared.save(user: authResponse.user, token: authResponse.access_token)
+        await MainActor.run {
+            AuthSession.shared.save(user: authResponse.user, token: authResponse.access_token)
+        }
         return authResponse.user
     }
 
@@ -107,11 +129,14 @@ class AuthService {
 
         if http.statusCode != 200 {
             let errObj = try? JSONDecoder().decode(AuthError.self, from: data)
-            throw NSError(domain: "Auth", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: errObj?.error ?? "Login failed"])
+            throw NSError(domain: "Auth", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: errObj?.error ?? "Login failed"])
         }
 
         let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
-        AuthSession.shared.save(user: authResponse.user, token: authResponse.access_token)
+        await MainActor.run {
+            AuthSession.shared.save(user: authResponse.user, token: authResponse.access_token)
+        }
         return authResponse.user
     }
 }

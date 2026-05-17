@@ -8,6 +8,8 @@ private enum SearchPhase: Equatable {
 // MARK: - ProductListView
 struct ProductListView: View {
     @EnvironmentObject private var viewModel: ProductViewModel
+    @EnvironmentObject var savedVM: SavedForLaterViewModel
+    @EnvironmentObject var addressBook: AddressBookViewModel
     @StateObject private var searchViewModel = SearchViewModel()
     @ObservedObject private var recoEngine = RecommendationEngine.shared
 
@@ -28,6 +30,40 @@ struct ProductListView: View {
 
     var recommendedProducts: [Product] {
         recoEngine.recommendedProducts
+    }
+
+    var filteredRecommendedProducts: [Product] {
+        var results = recommendedProducts
+        
+        // 1. Filter by category filter (selectedCategory)
+        if let category = searchViewModel.selectedCategory {
+            results = results.filter { $0.category == category }
+        }
+        
+        // 2. Filter by search text (if active and not empty)
+        let query = searchViewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            results = results.filter { product in
+                product.name.localizedCaseInsensitiveContains(query) ||
+                (product.category?.localizedCaseInsensitiveContains(query) ?? false) ||
+                (product.description?.localizedCaseInsensitiveContains(query) ?? false)
+            }
+        }
+        
+        // 3. Filter by price filter (maxPrice)
+        if let maxPrice = searchViewModel.maxPrice {
+            results = results.filter { $0.price <= maxPrice }
+        }
+        
+        // 4. Filter by tag filters (selectedTags)
+        if !searchViewModel.selectedTags.isEmpty {
+            results = results.filter { product in
+                guard let tags = product.tags else { return false }
+                return !searchViewModel.selectedTags.isDisjoint(with: tags)
+            }
+        }
+        
+        return results
     }
 
     var displayedProducts: [Product] {
@@ -80,7 +116,7 @@ struct ProductListView: View {
                 }
             }
             .animation(.spring(response: 0.38, dampingFraction: 0.82, blendDuration: 0.1), value: isSearchActive)
-            .navigationTitle(isSearchActive ? "" : "Williams Sonoma")
+            .navigationTitle(isSearchActive ? "" : "Shop")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 if !isSearchActive {
@@ -98,6 +134,8 @@ struct ProductListView: View {
                     ProfileView(onLogout: {
                         NotificationCenter.default.post(name: .userDidLogout, object: nil)
                     })
+                    .environmentObject(addressBook)
+                    .environmentObject(savedVM)
                 }
             }
             .sheet(isPresented: $showFilters) {
@@ -168,13 +206,6 @@ struct ProductListView: View {
                             .font(.system(size: 17))
                             .foregroundColor(Color(.systemGray3))
                     }
-                } else {
-                    Button { visualVM.showSourceDialog = true } label: {
-                        Image(systemName: "camera")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color(.placeholderText))
-                    }
-                    .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(.horizontal, 14)
@@ -182,6 +213,20 @@ struct ProductListView: View {
             .background(Color(UIColor.systemBackground))
             .clipShape(Capsule())
             .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
+
+            // Separate Camera glass button
+            Button {
+                visualVM.showSourceDialog = true
+            } label: {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
+            }
+            .buttonStyle(ScaleButtonStyle())
 
             // Circular X dismiss
             Button {
@@ -398,6 +443,10 @@ struct ProductListView: View {
                 // Active filter chips
                 activeFilterChips
 
+                if !filteredRecommendedProducts.isEmpty {
+                    RecommendationCarouselView(recommendedProducts: filteredRecommendedProducts)
+                }
+
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(searchViewModel.searchResults) { product in
                         NavigationLink(destination: ProductDetailView(product: product)) {
@@ -504,7 +553,7 @@ struct ProductListView: View {
                     VStack(alignment: .leading, spacing: 0) {
 
                         // MARK: — Search Pill (tapping activates inline search)
-                        HStack(spacing: 0) {
+                        HStack(spacing: 12) {
                             // Text area — tap to open text search
                             Button {
                                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -525,29 +574,29 @@ struct ProductListView: View {
 
                                     Spacer()
                                 }
-                                .padding(.leading, 14)
-                                .padding(.trailing, 6)
+                                .padding(.horizontal, 16)
                                 .padding(.vertical, 11)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .background(Color(UIColor.systemBackground))
+                            .clipShape(Capsule())
+                            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
 
                             // Camera — tap to open visual search
                             Button {
                                 visualVM.showSourceDialog = true
                             } label: {
                                 Image(systemName: "camera")
-                                    .font(.system(size: 15))
-                                    .foregroundColor(Color(.placeholderText))
-                                    .frame(width: 40, height: 44)
-                                    .contentShape(Rectangle())
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(Circle())
+                                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
                             }
                             .buttonStyle(ScaleButtonStyle())
-                            .padding(.trailing, 6)
                         }
-                        .background(Color(UIColor.systemBackground))
-                        .clipShape(Capsule())
-                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -575,8 +624,8 @@ struct ProductListView: View {
                         }
 
                         // MARK: — AI Recommendation Carousel
-                        if searchViewModel.selectedCategory == nil && !recommendedProducts.isEmpty {
-                            RecommendationCarouselView(recommendedProducts: recommendedProducts)
+                        if !filteredRecommendedProducts.isEmpty {
+                            RecommendationCarouselView(recommendedProducts: filteredRecommendedProducts)
                         }
 
                         // MARK: — Product Grid
@@ -716,7 +765,7 @@ private struct RecentlyViewedCard: View {
 // MARK: - Product Grid Card
 struct ProductCardView: View {
     let product: Product
-    @State private var isSaved = false
+    @EnvironmentObject var savedVM: SavedForLaterViewModel
 
     private var cardWidth: CGFloat {
         let screen = UIScreen.main.bounds.width
@@ -740,16 +789,16 @@ struct ProductCardView: View {
                     
                     Spacer(minLength: 4)
                     
-                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                    Image(systemName: savedVM.isSaved(productId: product.id) ? "bookmark.fill" : "bookmark")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(isSaved ? .primary : .secondary)
+                        .foregroundColor(savedVM.isSaved(productId: product.id) ? .primary : .secondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             let impact = UIImpactFeedbackGenerator(style: .light)
                             impact.impactOccurred()
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                isSaved.toggle()
+                                Task { await savedVM.toggleSave(product: product) }
                             }
                         }
                 }
@@ -825,9 +874,9 @@ struct VisualSearchModeSheet: View {
                 Text("Visual Search")
                     .font(.system(size: 20, weight: .bold, design: .default))
                     .foregroundStyle(.primary)
-                Text("How would you like to search?")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
+//                Text("How would you like to search?")
+//                    .font(.system(size: 14))
+//                    .foregroundStyle(.secondary)
             }
 
             // Cards
@@ -852,8 +901,8 @@ struct VisualSearchModeSheet: View {
 
             // Footer note
             HStack(spacing: 4) {
-                Image(systemName: "camera.fill")
-                Text("Camera access required")
+                //Image(systemName: "camera.fill")
+                //Text("Camera access required")
             }
             .font(.system(size: 12))
             .foregroundStyle(.tertiary)
@@ -997,4 +1046,5 @@ struct VisualSearchSourceSheet: View {
     ProductListView()
         .environmentObject(ProductViewModel())
         .environmentObject(CartManager())
+        .environmentObject(SavedForLaterViewModel())
 }

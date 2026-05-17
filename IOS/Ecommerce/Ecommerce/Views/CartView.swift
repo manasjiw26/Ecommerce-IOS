@@ -8,7 +8,8 @@ struct CartView: View {
     @StateObject private var occasionViewModel = OccasionViewModel()
     @StateObject private var pairItWithViewModel = PairItWithViewModel()
     @StateObject private var intelligenceVM = CartIntelligenceViewModel()
-    @StateObject private var savedVM = SavedForLaterViewModel()
+    @EnvironmentObject var savedVM: SavedForLaterViewModel
+    @EnvironmentObject var addressBook: AddressBookViewModel
 
     @State private var showingCheckout = false
     @State private var showSavedForLater = false
@@ -74,10 +75,12 @@ struct CartView: View {
         .sheet(isPresented: $showingCheckout) {
             CheckoutFlowView(checkoutItems: selectedItems)
                 .environmentObject(cartManager)
+                .environmentObject(addressBook)
         }
         .sheet(isPresented: $showSavedForLater) {
-            SavedForLaterView(vm: savedVM)
+            SavedForLaterView()
                 .environmentObject(cartManager)
+                .environmentObject(savedVM)
         }
         .safeAreaInset(edge: .bottom) {
             if !cartManager.items.isEmpty {
@@ -311,10 +314,10 @@ struct CartView: View {
             }
             Spacer()
             Button(action: {
-                if UserDefaults.standard.bool(forKey: "isLoggedIn") {
-                    showingCheckout = true
-                } else {
+                if AuthSession.shared.isGuest {
                     NotificationCenter.default.post(name: .requireAuth, object: nil)
+                } else {
+                    showingCheckout = true
                 }
             }) {
                 if isCheckingStock {

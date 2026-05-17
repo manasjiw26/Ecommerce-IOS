@@ -153,7 +153,7 @@ struct OrderDetailView: View {
         .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("Order Details")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.visible, for: .tabBar)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 stepsRevealed = 4

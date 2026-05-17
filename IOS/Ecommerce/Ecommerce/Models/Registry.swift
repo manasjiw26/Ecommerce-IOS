@@ -24,6 +24,20 @@ struct Registry: Codable, Identifiable {
         case theme
         case budget
     }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        userId = try container.decodeIfPresent(String.self, forKey: .userId) ?? ""
+        eventType = try container.decodeIfPresent(String.self, forKey: .eventType) ?? "Event"
+        eventDate = try container.decodeIfPresent(String.self, forKey: .eventDate) ?? ""
+        eventLocation = try container.decodeIfPresent(String.self, forKey: .eventLocation)
+        isPublic = try container.decodeIfPresent(Bool.self, forKey: .isPublic) ?? true
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        shareToken = try container.decodeIfPresent(String.self, forKey: .shareToken)
+        theme = try container.decodeIfPresent(String.self, forKey: .theme)
+        budget = try container.decodeIfPresent(Double.self, forKey: .budget)
+    }
 }
 
 struct RegistryItem: Codable, Identifiable {
@@ -59,11 +73,11 @@ struct RegistryItem: Codable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        registryId = try container.decode(String.self, forKey: .registryId)
-        productId = try container.decode(Int.self, forKey: .productId)
-        quantityRequested = try container.decode(Int.self, forKey: .quantityRequested)
-        quantityReceived = try container.decode(Int.self, forKey: .quantityReceived)
-        isMostWanted = try container.decode(Bool.self, forKey: .isMostWanted)
+        registryId = try container.decodeIfPresent(String.self, forKey: .registryId) ?? ""
+        productId = try container.decodeIfPresent(Int.self, forKey: .productId) ?? 0
+        quantityRequested = try container.decodeIfPresent(Int.self, forKey: .quantityRequested) ?? 1
+        quantityReceived = try container.decodeIfPresent(Int.self, forKey: .quantityReceived) ?? 0
+        isMostWanted = try container.decodeIfPresent(Bool.self, forKey: .isMostWanted) ?? false
         isGroupGift = try container.decodeIfPresent(Bool.self, forKey: .isGroupGift)
         aiReason = try container.decodeIfPresent(String.self, forKey: .aiReason)
         totalContributed = try container.decodeIfPresent(Double.self, forKey: .totalContributed)

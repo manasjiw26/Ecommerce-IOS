@@ -11,9 +11,15 @@ struct ChatBubble: View {
                 if message.role == .user { Spacer(minLength: 0) }
 
                 if message.role == .assistant {
-                    // Bot avatar with AI pulse shadow
+                    // Bot avatar with AI pulse shadow and white ring
                     ZStack {
-                        Circle().fill(Color.black).frame(width: 28, height: 28)
+                        Circle()
+                            .fill(Color.black)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 1.2)
+                            )
+                            .frame(width: 28, height: 28)
                             .shadow(color: Color(hex: "#1a1040").opacity(0.35), radius: message.isLoading ? 8 : 3, x: 0, y: 0)
                             .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: message.isLoading)
                         Image(systemName: "sparkles")
@@ -26,14 +32,21 @@ struct ChatBubble: View {
                     TypingIndicator()
                 } else if !message.text.isEmpty {
                     if message.role == .assistant {
-                        TypewriterText(fullText: message.text, messageId: message.id)
-                            .font(.subheadline)
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .clipShape(BubbleShape(isUser: false))
-                            .frame(maxWidth: 280, alignment: .leading)
+                        ZStack(alignment: .topLeading) {
+                            // Invisible text reserves the final height instantly, stopping layout jitter
+                            Text(message.text)
+                                .font(.subheadline)
+                                .hidden()
+                            
+                            TypewriterText(fullText: message.text, messageId: message.id)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .clipShape(BubbleShape(isUser: false))
+                        .frame(maxWidth: 280, alignment: .leading)
                     } else {
                         Text(message.text)
                             .font(.subheadline)
@@ -42,6 +55,10 @@ struct ChatBubble: View {
                             .padding(.vertical, 10)
                             .background(Color.black)
                             .clipShape(BubbleShape(isUser: true))
+                            .overlay(
+                                BubbleShape(isUser: true)
+                                    .stroke(Color.white.opacity(0.24), lineWidth: 1.2)
+                            )
                             .frame(maxWidth: 280, alignment: .trailing)
                     }
                 }

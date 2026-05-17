@@ -17,11 +17,13 @@ struct ContentView: View {
     }
 
     // MARK: — State
-    @State private var selectedTab       = 0
-    @State private var lastAllowedTab    = 0
-    @State private var showChat          = false
+    @State private var selectedTab          = 0
+    @State private var lastAllowedTab       = 0
+    @State private var showChat             = false
     @State private var toastProduct: Product? = nil
-    @State private var showRegistryAuthAlert  = false
+    @State private var showAuthPrompt       = false
+    @State private var authPromptContext    = AuthPromptContext.registry
+    @State private var pendingTab: Int?     = nil
     @State private var bubbleContextMessage: String? = nil
 
     // AI button drag / shimmer state
@@ -75,10 +77,12 @@ struct ContentView: View {
                 selectedTab = 0
             }
             .onChange(of: selectedTab) { newValue in
-                // Registry requires an authenticated user; block the tab for anonymous sessions.
-                if newValue == 3 && authSession.currentUser == nil {
-                    showRegistryAuthAlert = true
-                    selectedTab = lastAllowedTab
+                // Orders (2) and Registry (3) require a signed-in user.
+                if authSession.isGuest && (newValue == 2 || newValue == 3) {
+                    pendingTab           = newValue
+                    authPromptContext    = newValue == 3 ? .registry : .orders
+                    selectedTab          = lastAllowedTab
+                    showAuthPrompt       = true
                 } else {
                     lastAllowedTab = newValue
                 }
@@ -203,13 +207,18 @@ struct ContentView: View {
         .sheet(isPresented: $showChat) {
             ChatView(initialBubbleMessage: bubbleContextMessage)
         }
-        .alert("Sign in required", isPresented: $showRegistryAuthAlert) {
-            Button("Sign In / Sign Up") {
-                NotificationCenter.default.post(name: .requireAuth, object: nil)
+        // Auth prompt sheet — shown when guest tries to access protected tabs
+        .sheet(isPresented: $showAuthPrompt) {
+            AuthPromptSheet(context: authPromptContext) {
+                // After successful login, navigate to the tab they originally wanted
+                if let tab = pendingTab {
+                    selectedTab  = tab
+                    lastAllowedTab = tab
+                    pendingTab   = nil
+                }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Please sign in to access and manage registries.")
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
         }
         .task {
             // Start shimmer animation
@@ -351,7 +360,7 @@ private struct AIHintBubble: View {
                             .fill(.ultraThinMaterial)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                    .stroke(Color.white.opacity(0.75), lineWidth: 1.5)
                             )
                             .shadow(color: .black.opacity(0.16), radius: 14, x: 0, y: 5)
 
@@ -364,8 +373,8 @@ private struct AIHintBubble: View {
                                         .offset(y: typingPhase ? -4 : 0)
                                         .animation(
                                             .easeInOut(duration: 0.45)
-                                            .repeatForever(autoreverses: true)
-                                            .delay(Double(i) * 0.13),
+                                             .repeatForever(autoreverses: true)
+                                             .delay(Double(i) * 0.13),
                                             value: typingPhase
                                         )
                                 }
@@ -398,9 +407,13 @@ private struct AIHintBubble: View {
                         )
                     }
 
-                    // Downward caret
+                    // Downward caret with matching white border
                     CaretShape()
                         .fill(.ultraThinMaterial)
+                        .overlay(
+                            CaretShape()
+                                .stroke(Color.white.opacity(0.75), lineWidth: 1.5)
+                        )
                         .frame(width: 14, height: 7)
                         .offset(y: -1.5)
                         .padding(isLeftAligned ? .leading : .trailing, 22)

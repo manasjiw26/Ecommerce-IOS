@@ -7,7 +7,7 @@ struct CheckoutSheetView: View {
     let checkoutItems: [CartItem]
     let addOnTotal: Double
 
-    @StateObject private var addressBook = AddressBookViewModel()
+    @EnvironmentObject var addressBook: AddressBookViewModel
     @State private var editingAddress: Address? = nil
     @State private var step: CheckoutStep = .address
 

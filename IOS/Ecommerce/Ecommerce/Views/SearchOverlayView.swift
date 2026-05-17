@@ -117,21 +117,26 @@ struct SearchOverlayView: View {
                             .font(.system(size: 17))
                             .foregroundColor(Color(.systemGray3))
                     }
-                } else {
-                    Button {
-                        visualVM.showSourceDialog = true
-                    } label: {
-                        Image(systemName: "viewfinder")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color(.placeholderText))
-                    }
-                    .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .background(Color(UIColor.systemGray6))
             .clipShape(Capsule())
+
+            // Separate Camera glass button
+            Button {
+                visualVM.showSourceDialog = true
+            } label: {
+                Image(systemName: "camera")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+                    .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
+            }
+            .buttonStyle(ScaleButtonStyle())
 
             // Circular X dismiss button (replaces text Cancel)
             Button {

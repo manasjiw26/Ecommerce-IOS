@@ -372,13 +372,13 @@ router.post('/recommend', async (req, res) => {
             recommendedItems = JSON.parse(response.text());
         } catch(e) {
             console.error("Gemini Re-ranking Failed:", e.message);
-            recommendedItems = candidatesToRank.map(c => ({ id: c.id, reasoning: "A premium addition to your collection." }));
+            recommendedItems = candidatesToRank.map(c => ({ id: c.id, reasoning: "" }));
         }
 
         const fullRecommendations = candidates.map(productDetails => {
             const item = recommendedItems.find(p => p.id === productDetails.id);
-            const reasoning = item?.reasoning || "A handpicked premium recommendation for your collection.";
-            return { ...productDetails, ai_reasoning: reasoning };
+            const reasoning = item?.reasoning || "";
+            return { ...productDetails, ai_reasoning: reasoning || undefined };
         });
 
         res.json(fullRecommendations);

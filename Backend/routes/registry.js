@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../supabaseClient');
+const { authenticateToken, requireAuth } = require('../middleware/authMiddleware');
 
 const fixImg = (p) => {
     return p;
@@ -14,15 +15,15 @@ function daysUntil(dateStr) {
     return Math.ceil((d - now) / 86400000);
 }
 
-async function buildDashboard(registryId) {
-    const { data: registry, error: regErr } = await supabase
+async function buildDashboard(registryId, dbClient = supabase) {
+    const { data: registry, error: regErr } = await dbClient
         .from('registries')
         .select('id, event_type, event_date, budget, share_token, theme, event_location, is_public, user_id')
         .eq('id', registryId)
         .single();
     if (regErr) throw regErr;
 
-    const { data: itemsRaw, error: itemsErr } = await supabase
+    const { data: itemsRaw, error: itemsErr } = await dbClient
         .from('registry_items')
         .select('*, products (*)')
         .eq('registry_id', registryId)
@@ -32,7 +33,7 @@ async function buildDashboard(registryId) {
     const itemIds = (itemsRaw || []).map((i) => i.id);
     let contributions = [];
     if (itemIds.length) {
-        const { data: contribData, error: contribErr } = await supabase
+        const { data: contribData, error: contribErr } = await dbClient
             .from('registry_contributions')
             .select('*')
             .in('registry_item_id', itemIds)
@@ -94,11 +95,11 @@ async function buildDashboard(registryId) {
 }
 
 // GET /registry/starter-bundles
-router.get('/starter-bundles', async (req, res) => {
+router.get('/starter-bundles', authenticateToken, async (req, res) => {
     try {
         const { event_type } = req.query;
         // Fetch real products from catalog to construct bundles dynamically!
-        const { data: products, error } = await supabase.from('products').select('*');
+        const { data: products, error } = await req.supabase.from('products').select('*');
         if (error) return res.status(500).json({ error: error.message });
         const catalog = products || [];
 
@@ -232,8 +233,7 @@ router.get('/starter-bundles', async (req, res) => {
 });
 
 // GET /registry/search?name=Emma
-// NOTE: keep this before router.get('/:id', ...) so Express doesn't treat "search" as an id.
-router.get('/search', async (req, res) => {
+router.get('/search', authenticateToken, async (req, res) => {
     try {
         const { name } = req.query;
         const q = (name || '').trim();
@@ -241,7 +241,7 @@ router.get('/search', async (req, res) => {
             return res.status(400).json({ error: 'name query must be at least 2 characters', code: 400 });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registries')
             .select('id, user_id, event_type, event_date, event_location, theme, share_token, is_public, budget, created_at')
             .eq('is_public', true)
@@ -258,11 +258,11 @@ router.get('/search', async (req, res) => {
 });
 
 // GET registries for a user
-router.get('/user/:userId', async (req, res) => {
+router.get('/user/:userId', authenticateToken, async (req, res) => {
     try {
         const { userId } = req.params;
-               // 1. Fetch registries where the user is the owner
-        const { data: owned, error: ownedErr } = await supabase
+        // 1. Fetch registries where the user is the owner
+        const { data: owned, error: ownedErr } = await req.supabase
             .from('registries')
             .select('*')
             .eq('user_id', userId);
@@ -270,21 +270,21 @@ router.get('/user/:userId', async (req, res) => {
 
         // 2. Fetch registries where the user is a collaborator (queried by their registered email)
         let collabRegistries = [];
-        const { data: userRec, error: userErr } = await supabase
+        const { data: userRec, error: userErr } = await req.supabase
             .from('users')
             .select('email')
             .eq('id', userId)
             .maybeSingle();
 
         if (!userErr && userRec && userRec.email) {
-            const { data: collabs, error: collabErr } = await supabase
+            const { data: collabs, error: collabErr } = await req.supabase
                 .from('registry_collaborators')
                 .select('registry_id')
                 .eq('email', userRec.email);
             
             if (!collabErr && collabs && collabs.length > 0) {
                 const collabIds = collabs.map(c => c.registry_id);
-                const { data: shared, error: sharedErr } = await supabase
+                const { data: shared, error: sharedErr } = await req.supabase
                     .from('registries')
                     .select('*')
                     .in('id', collabIds);
@@ -311,17 +311,17 @@ router.get('/user/:userId', async (req, res) => {
 });
 
 // GET public registry by share token (guest access)
-router.get('/public/:shareToken', async (req, res) => {
+router.get('/public/:shareToken', authenticateToken, async (req, res) => {
     try {
         const { shareToken } = req.params;
-        const { data: registry, error } = await supabase
+        const { data: registry, error } = await req.supabase
             .from('registries')
             .select('id')
             .eq('share_token', shareToken)
             .maybeSingle();
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         if (!registry) return res.status(404).json({ error: 'registry not found', code: 404 });
-        const dashboard = await buildDashboard(registry.id);
+        const dashboard = await buildDashboard(registry.id, req.supabase);
         return res.json(dashboard);
     } catch (e) {
         console.error('[GET /registry/public/:shareToken]:', e.message);
@@ -330,10 +330,10 @@ router.get('/public/:shareToken', async (req, res) => {
 });
 
 // GET single registry
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { data, error } = await supabase.from('registries').select('*').eq('id', id).single();
+        const { data, error } = await req.supabase.from('registries').select('*').eq('id', id).single();
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         return res.json(data);
     } catch (e) {
@@ -343,20 +343,23 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST create registry
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
     try {
-        const { user_id, event_type, event_date, event_location, is_public, address_pre_event, address_post_event, theme, budget } =
+        const { event_type, event_date, event_location, is_public, address_pre_event, address_post_event, theme, budget } =
             req.body;
 
-        const { data, error } = await supabase
+        // Securely use authenticated user ID
+        const userId = req.user.id;
+
+        const { data, error } = await req.supabase
             .from('registries')
             .insert([
                 {
-                    user_id,
+                    user_id: userId,
                     event_type,
                     event_date,
                     event_location,
-                    is_public,
+                    is_public: is_public ?? true,
                     address_pre_event,
                     address_post_event,
                     theme,
@@ -375,11 +378,11 @@ router.post('/', async (req, res) => {
 });
 
 // POST /registry/:id/budget
-router.post('/:id/budget', async (req, res) => {
+router.post('/:id/budget', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { budget } = req.body;
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registries')
             .update({ budget: Number(budget || 0) })
             .eq('id', id)
@@ -394,10 +397,10 @@ router.post('/:id/budget', async (req, res) => {
 });
 
 // GET /registry/:id/dashboard
-router.get('/:id/dashboard', async (req, res) => {
+router.get('/:id/dashboard', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const dashboard = await buildDashboard(id);
+        const dashboard = await buildDashboard(id, req.supabase);
         return res.json(dashboard);
     } catch (e) {
         console.error('[GET /registry/:id/dashboard]:', e.message);
@@ -406,14 +409,14 @@ router.get('/:id/dashboard', async (req, res) => {
 });
 
 // POST /registry/:id/contribute
-router.post('/:id/contribute', async (req, res) => {
+router.post('/:id/contribute', authenticateToken, async (req, res) => {
     try {
         const { registry_item_id, contributor_name, amount, message } = req.body;
         if (!registry_item_id || !contributor_name || amount == null) {
             return res.status(400).json({ error: 'registry_item_id, contributor_name, amount required', code: 400 });
         }
 
-        const { data: contribution, error: insErr } = await supabase
+        const { data: contribution, error: insErr } = await req.supabase
             .from('registry_contributions')
             .insert([
                 {
@@ -427,14 +430,14 @@ router.post('/:id/contribute', async (req, res) => {
             .single();
         if (insErr) return res.status(500).json({ error: insErr.message, code: 500 });
 
-        const { data: item, error: itemErr } = await supabase
+        const { data: item, error: itemErr } = await req.supabase
             .from('registry_items')
             .select('id, price_snapshot, quantity_requested')
             .eq('id', registry_item_id)
             .single();
         if (itemErr) return res.status(500).json({ error: itemErr.message, code: 500 });
 
-        const { data: allContrib, error: sumErr } = await supabase
+        const { data: allContrib, error: sumErr } = await req.supabase
             .from('registry_contributions')
             .select('amount')
             .eq('registry_item_id', registry_item_id);
@@ -457,16 +460,16 @@ router.post('/:id/contribute', async (req, res) => {
 });
 
 // GET /registry/:id/contributions
-router.get('/:id/contributions', async (req, res) => {
+router.get('/:id/contributions', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { data: items, error: itemErr } = await supabase.from('registry_items').select('id').eq('registry_id', id);
+        const { data: items, error: itemErr } = await req.supabase.from('registry_items').select('id').eq('registry_id', id);
         if (itemErr) return res.status(500).json({ error: itemErr.message, code: 500 });
 
         const itemIds = (items || []).map((x) => x.id);
         if (!itemIds.length) return res.json([]);
 
-        const { data: contribs, error: cErr } = await supabase
+        const { data: contribs, error: cErr } = await req.supabase
             .from('registry_contributions')
             .select('*')
             .in('registry_item_id', itemIds)
@@ -489,13 +492,13 @@ router.get('/:id/contributions', async (req, res) => {
 });
 
 // POST /registry/:id/collaborators
-router.post('/:id/collaborators', async (req, res) => {
+router.post('/:id/collaborators', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { email, role } = req.body;
         if (!email) return res.status(400).json({ error: 'email required', code: 400 });
 
-        const { data: existing, error: exErr } = await supabase
+        const { data: existing, error: exErr } = await req.supabase
             .from('registry_collaborators')
             .select('*')
             .eq('registry_id', id)
@@ -504,7 +507,7 @@ router.post('/:id/collaborators', async (req, res) => {
         if (exErr) return res.status(500).json({ error: exErr.message, code: 500 });
         if (existing) return res.json({ collaborator: existing, already_existed: true });
 
-        const { data: collaborator, error } = await supabase
+        const { data: collaborator, error } = await req.supabase
             .from('registry_collaborators')
             .insert([{ registry_id: id, email, role: role || 'viewer' }])
             .select()
@@ -518,10 +521,10 @@ router.post('/:id/collaborators', async (req, res) => {
 });
 
 // GET /registry/:id/collaborators
-router.get('/:id/collaborators', async (req, res) => {
+router.get('/:id/collaborators', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registry_collaborators')
             .select('*')
             .eq('registry_id', id)
@@ -535,10 +538,10 @@ router.get('/:id/collaborators', async (req, res) => {
 });
 
 // GET /registry/:id/share-link
-router.get('/:id/share-link', async (req, res) => {
+router.get('/:id/share-link', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { data, error } = await supabase.from('registries').select('share_token').eq('id', id).single();
+        const { data, error } = await req.supabase.from('registries').select('share_token').eq('id', id).single();
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         const shareToken = data?.share_token;
         return res.json({
@@ -552,10 +555,10 @@ router.get('/:id/share-link', async (req, res) => {
 });
 
 // GET registry items
-router.get('/:id/items', async (req, res) => {
+router.get('/:id/items', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registry_items')
             .select(`
                 *,
@@ -578,7 +581,7 @@ router.get('/:id/items', async (req, res) => {
 });
 
 // POST add item to registry (extended to store price_snapshot + ai_reason)
-router.post('/:id/items', async (req, res) => {
+router.post('/:id/items', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { product_id, quantity_requested, is_most_wanted, ai_reason } = req.body;
@@ -589,7 +592,7 @@ router.post('/:id/items', async (req, res) => {
             return res.status(400).json({ error: 'valid product_id is required', code: 400 });
         }
 
-        const { data: product, error: prodErr } = await supabase
+        const { data: product, error: prodErr } = await req.supabase
             .from('products')
             .select('id, price')
             .eq('id', productId)
@@ -598,7 +601,7 @@ router.post('/:id/items', async (req, res) => {
         if (!product) return res.status(404).json({ error: `product ${productId} not found`, code: 404 });
 
         // Safe Check: If item already exists, update the quantity requested instead of crashing on unique constraint
-        const { data: existing, error: exErr } = await supabase
+        const { data: existing, error: exErr } = await req.supabase
             .from('registry_items')
             .select('*')
             .eq('registry_id', id)
@@ -609,7 +612,7 @@ router.post('/:id/items', async (req, res) => {
 
         if (existing) {
             const newQty = Number(existing.quantity_requested || 0) + quantity;
-            const { data: updated, error: updErr } = await supabase
+            const { data: updated, error: updErr } = await req.supabase
                 .from('registry_items')
                 .update({
                     quantity_requested: newQty,
@@ -622,7 +625,7 @@ router.post('/:id/items', async (req, res) => {
             return res.json(updated);
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registry_items')
             .insert([
                 {
@@ -637,7 +640,34 @@ router.post('/:id/items', async (req, res) => {
             .select()
             .single();
 
-        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        if (error) {
+            // Handle race condition where two rapid requests try to insert at the exact same time
+            if (error.code === '23505') {
+                const { data: existingRace, error: raceErr } = await req.supabase
+                    .from('registry_items')
+                    .select('*')
+                    .eq('registry_id', id)
+                    .eq('product_id', productId)
+                    .single();
+                
+                if (existingRace) {
+                    const newQty = Number(existingRace.quantity_requested || 0) + quantity;
+                    const { data: updated, error: updErr } = await req.supabase
+                        .from('registry_items')
+                        .update({
+                            quantity_requested: newQty,
+                            ai_reason: ai_reason || existingRace.ai_reason
+                        })
+                        .eq('id', existingRace.id)
+                        .select()
+                        .single();
+                    if (updErr) return res.status(500).json({ error: updErr.message, code: 500 });
+                    return res.json(updated);
+                }
+            }
+            return res.status(500).json({ error: error.message, code: 500 });
+        }
+        
         return res.json(data);
     } catch (e) {
         console.error('[POST /registry/:id/items]:', e.message);
@@ -646,21 +676,21 @@ router.post('/:id/items', async (req, res) => {
 });
 
 // PUT update item (e.g. quantity received, or most wanted)
-router.put('/:id/items/:itemId', async (req, res) => {
+router.put('/:id/items/:itemId', requireAuth, async (req, res) => {
     try {
         const { id, itemId } = req.params;
         const updates = req.body;
 
         if (updates.is_most_wanted === true) {
             // Enforce only ONE most wanted item in this registry
-            await supabase
+            await req.supabase
                 .from('registry_items')
                 .update({ is_most_wanted: false })
                 .eq('registry_id', id)
                 .neq('id', itemId);
         }
 
-        const { data, error } = await supabase.from('registry_items').update(updates).eq('id', itemId).select().single();
+        const { data, error } = await req.supabase.from('registry_items').update(updates).eq('id', itemId).select().single();
 
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         return res.json(data);
@@ -671,11 +701,11 @@ router.put('/:id/items/:itemId', async (req, res) => {
 });
 
 // DELETE item from registry
-router.delete('/:id/items/:itemId', async (req, res) => {
+router.delete('/:id/items/:itemId', requireAuth, async (req, res) => {
     try {
         const { itemId } = req.params;
 
-        const { error } = await supabase.from('registry_items').delete().eq('id', itemId);
+        const { error } = await req.supabase.from('registry_items').delete().eq('id', itemId);
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         return res.json({ success: true });
     } catch (e) {
@@ -685,11 +715,11 @@ router.delete('/:id/items/:itemId', async (req, res) => {
 });
 
 // PUT update registry
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const updates = req.body;
-        const { data, error } = await supabase
+        const { data, error } = await req.supabase
             .from('registries')
             .update(updates)
             .eq('id', id)
@@ -704,11 +734,11 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE registry
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         // Delete children first to avoid FK constraint failures when DB doesn't have ON DELETE CASCADE.
-        const { data: items, error: itemsErr } = await supabase
+        const { data: items, error: itemsErr } = await req.supabase
             .from('registry_items')
             .select('id')
             .eq('registry_id', id);
@@ -716,17 +746,17 @@ router.delete('/:id', async (req, res) => {
 
         const itemIds = (items || []).map((x) => x.id);
         if (itemIds.length) {
-            const { error: contribErr } = await supabase.from('registry_contributions').delete().in('registry_item_id', itemIds);
+            const { error: contribErr } = await req.supabase.from('registry_contributions').delete().in('registry_item_id', itemIds);
             if (contribErr) return res.status(500).json({ error: contribErr.message, code: 500 });
         }
 
-        const { error: collabErr } = await supabase.from('registry_collaborators').delete().eq('registry_id', id);
+        const { error: collabErr } = await req.supabase.from('registry_collaborators').delete().eq('registry_id', id);
         if (collabErr) return res.status(500).json({ error: collabErr.message, code: 500 });
 
-        const { error: itemsDelErr } = await supabase.from('registry_items').delete().eq('registry_id', id);
+        const { error: itemsDelErr } = await req.supabase.from('registry_items').delete().eq('registry_id', id);
         if (itemsDelErr) return res.status(500).json({ error: itemsDelErr.message, code: 500 });
 
-        const { error } = await supabase.from('registries').delete().eq('id', id);
+        const { error } = await req.supabase.from('registries').delete().eq('id', id);
         if (error) return res.status(500).json({ error: error.message, code: 500 });
         return res.json({ success: true });
     } catch (e) {

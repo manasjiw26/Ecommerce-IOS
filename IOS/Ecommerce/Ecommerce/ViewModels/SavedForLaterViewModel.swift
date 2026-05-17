@@ -29,5 +29,38 @@ final class SavedForLaterViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    func isSaved(productId: Int) -> Bool {
+        return items.contains { $0.product?.id == productId }
+    }
+
+    func toggleSave(product: Product) async {
+        let currentlySaved = isSaved(productId: product.id)
+        
+        // Optimistic update
+        if currentlySaved {
+            items.removeAll { $0.product?.id == product.id }
+        } else {
+            let mockItem = SavedForLaterItem(
+                id: UUID().uuidString,
+                savedAt: ISO8601DateFormatter().string(from: Date()),
+                product: product
+            )
+            items.append(mockItem)
+        }
+        
+        // Backend sync
+        do {
+            if currentlySaved {
+                try await SavedForLaterService.shared.remove(deviceId: deviceId, productId: product.id)
+            } else {
+                try await SavedForLaterService.shared.save(deviceId: deviceId, productId: product.id)
+            }
+        } catch {
+            // Revert on failure
+            await refresh()
+            errorMessage = error.localizedDescription
+        }
+    }
 }
 

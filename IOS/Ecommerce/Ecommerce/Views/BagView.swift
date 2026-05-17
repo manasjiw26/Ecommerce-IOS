@@ -6,19 +6,20 @@ struct BagView: View {
     @EnvironmentObject var cartManager: CartManager
 
     @StateObject private var bagVM       = BagViewModel()
-    @StateObject private var savedVM     = SavedForLaterViewModel()
-    @StateObject private var addressBook = AddressBookViewModel()
+    @EnvironmentObject var savedVM: SavedForLaterViewModel
+    @EnvironmentObject var addressBook: AddressBookViewModel
     @StateObject private var occasionViewModel = OccasionViewModel()
     @StateObject private var pairItWithVM = PairItWithViewModel()
 
-    @State private var showSaved         = false
-    @State private var showCheckout      = false
-    @State private var showAddressSheet  = false
+    @State private var showSaved               = false
+    @State private var showCheckout             = false
+    @State private var showAddressSheet         = false
     @State private var editingAddress: Address? = nil
-    @State private var undo: UndoState?  = nil
-    @State private var showExpressAlert  = false
-    @State private var showOutOfStockAlert = false
-    @State private var toastMessage: String? = nil
+    @State private var undo: UndoState?         = nil
+    @State private var showExpressAlert         = false
+    @State private var showOutOfStockAlert      = false
+    @State private var toastMessage: String?    = nil
+    @State private var showAuthPromptForCheckout = false
 
     // Promo
     @State private var promoFieldText    = ""
@@ -83,13 +84,23 @@ struct BagView: View {
             }
         }
         .sheet(isPresented: $showSaved) {
-            SavedForLaterView(vm: savedVM)
+            SavedForLaterView()
                 .presentationDetents([.medium, .large])
                 .environmentObject(cartManager)
         }
         .sheet(isPresented: $showCheckout) {
             CheckoutSheetView(checkoutItems: cartManager.items, addOnTotal: 0)
                 .environmentObject(cartManager)
+                .environmentObject(addressBook)
+                .environmentObject(savedVM)
+        }
+        // Guest auth prompt before checkout
+        .sheet(isPresented: $showAuthPromptForCheckout) {
+            AuthPromptSheet(context: .checkout) {
+                showCheckout = true
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
         }
         .overlay(alignment: .bottom) {
             if let undo {
@@ -754,10 +765,10 @@ struct BagView: View {
                 Button {
                     if hasOutOfStock {
                         showOutOfStockAlert = true
-                    } else if UserDefaults.standard.bool(forKey: "isLoggedIn") {
-                        showCheckout = true
+                    } else if AuthSession.shared.isGuest {
+                        showAuthPromptForCheckout = true
                     } else {
-                        NotificationCenter.default.post(name: .requireAuth, object: nil)
+                        showCheckout = true
                     }
                 } label: {
                     HStack {

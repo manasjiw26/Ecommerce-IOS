@@ -7,11 +7,11 @@ struct ProductDetailView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
+    @EnvironmentObject var savedVM: SavedForLaterViewModel
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @ObservedObject private var authSession = AuthSession.shared
     @State private var similarProducts: [Product] = []
     @State private var isLoadingSimilar = true
-    @State private var isSaved = false
     private let imageHeight: CGFloat = 340
     
     @State private var productReviews: [ProductReview] = []
@@ -19,6 +19,11 @@ struct ProductDetailView: View {
     @State private var isShowingWriteReviewSheet = false
     @State private var isShowingGuestAlert = false
     @State private var isReviewsExpanded = false
+    
+    // Registry Add Workflow
+    @State private var isShowingRegistrySheet = false
+    @State private var showingToast = false
+    @State private var toastMessage = ""
     
     private var averageRating: Double {
         guard !productReviews.isEmpty else { return 0.0 }
@@ -114,7 +119,7 @@ struct ProductDetailView: View {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 20, weight: .semibold))
                                     .foregroundColor(.secondary)
-                                    .frame(width: 40, height: 40)
+                                    .frame(width: 44, height: 44)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -123,13 +128,13 @@ struct ProductDetailView: View {
                                 let impact = UIImpactFeedbackGenerator(style: .medium)
                                 impact.impactOccurred()
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    isSaved.toggle()
+                                    Task { await savedVM.toggleSave(product: product) }
                                 }
                             }) {
-                                Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                                Image(systemName: savedVM.isSaved(productId: product.id) ? "bookmark.fill" : "bookmark")
                                     .font(.system(size: 20, weight: .semibold))
-                                    .foregroundColor(isSaved ? .primary : .secondary)
-                                    .frame(width: 40, height: 40)
+                                    .foregroundColor(savedVM.isSaved(productId: product.id) ? .primary : .secondary)
+                                    .frame(width: 44, height: 44)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -210,7 +215,7 @@ struct ProductDetailView: View {
                     // MARK: — Customer Reviews
                     reviewsSection
                     
-                    // MARK: — Suggested Matches Carousel (Moved below Customer Reviews)
+                    // MARK: — Suggested Matches Carousel
                     if isLoadingSimilar {
                         Divider().padding(.top, 4)
                         VStack(alignment: .leading, spacing: 10) {
@@ -223,9 +228,10 @@ struct ProductDetailView: View {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 14) {
                                     ForEach(0..<3) { _ in
-                                        Rectangle()
+                                        let placeholder = Rectangle()
                                             .fill(Color(.systemGray5))
                                             .frame(width: 130, height: 180)
+                                        placeholder
                                             .clipShape(RoundedRectangle(cornerRadius: 10))
                                             .shimmer()
                                     }
@@ -311,8 +317,33 @@ struct ProductDetailView: View {
                 .padding(20)
             }
         }
+        .overlay(
+            VStack {
+                Spacer()
+                if showingToast {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                        Text(toastMessage)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.black.opacity(0.85))
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                    .padding(.bottom, 120)
+                }
+            }
+            .animation(.spring(), value: showingToast)
+        )
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .toolbar(.visible, for: .tabBar)
         .toolbar {
             if showCloseButton {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -334,29 +365,24 @@ struct ProductDetailView: View {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
             RecommendationEngine.shared.recordView(product: product)
             productViewModel.activeProductId = product.id
-            // Notify AI bubble with product context
             NotificationCenter.default.post(
                 name: .aiDidSpotProduct,
                 object: nil,
                 userInfo: ["name": product.name, "id": product.id]
             )
         }
-
         .onDisappear {
             if productViewModel.activeProductId == product.id {
                 productViewModel.activeProductId = nil
             }
         }
         .task {
-            // Load similar products asynchronously
             let results = await recoEngine.fetchSimilarProducts(to: product)
-            // Update state on the main thread safely
             await MainActor.run {
                 self.similarProducts = results
                 self.isLoadingSimilar = false
             }
             
-            // Load reviews dynamically from Supabase via Express API
             do {
                 let fetchedReviews = try await APIService.shared.fetchReviews(productId: product.id)
                 await MainActor.run {
@@ -387,7 +413,16 @@ struct ProductDetailView: View {
         .alert("Authentication Required", isPresented: $isShowingGuestAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Please login first to write a review.")
+            Text("Please login first to proceed.")
+        }
+        .sheet(isPresented: $isShowingRegistrySheet) {
+            AddToRegistrySheet(product: product) { successMsg in
+                toastMessage = successMsg
+                withAnimation { showingToast = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    withAnimation { showingToast = false }
+                }
+            }
         }
     }
 
@@ -439,13 +474,50 @@ struct ProductDetailView: View {
                 
                 Spacer()
                 
+                // Add to Registry button
+                Button(action: {
+                    let impact = UIImpactFeedbackGenerator(style: .medium)
+                    impact.impactOccurred()
+                    if authSession.currentUser != nil {
+                        isShowingRegistrySheet = true
+                    } else {
+                        isShowingGuestAlert = true
+                    }
+                }) {
+                    ZStack {
+                        if quantityInCart > 0 {
+                            Image(systemName: "gift")
+                                .font(.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                                .transition(.scale.combined(with: .opacity))
+                                .frame(width: 44, height: 44)
+                        } else {
+                            Text("Add to Registry")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .padding(.horizontal, 20)
+                                .frame(height: 44)
+                                .transition(.opacity)
+                        }
+                    }
+                    .background(Color(UIColor.systemGray5))
+                    .cornerRadius(22)
+                }
+                .buttonStyle(.plain)
+                
                 if quantityInCart > 0 {
-                    // Counter UI
+                    // Counter UI (Stepper Variant)
                     HStack(spacing: 20) {
                         Button(action: {
                             let impactMed = UIImpactFeedbackGenerator(style: .medium)
                             impactMed.impactOccurred()
-                            cartManager.removeFromCart(product: product)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                cartManager.removeFromCart(product: product)
+                            }
                         }) {
                             Image(systemName: "minus")
                                 .font(.system(size: 16, weight: .bold))
@@ -458,11 +530,14 @@ struct ProductDetailView: View {
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                             .frame(minWidth: 20)
+                            .contentTransition(.numericText())
                         
                         Button(action: {
                             let impactMed = UIImpactFeedbackGenerator(style: .medium)
                             impactMed.impactOccurred()
-                            cartManager.addToCart(product: product)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                cartManager.addToCart(product: product)
+                            }
                         }) {
                             Image(systemName: "plus")
                                 .font(.system(size: 16, weight: .bold))
@@ -476,16 +551,17 @@ struct ProductDetailView: View {
                     .padding(.vertical, 8)
                     .background(Color.primary)
                     .clipShape(Capsule())
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
                 } else {
-                    // Add to Cart Button
+                    // Add to Cart Button (Standard Variant)
                     Button(action: {
                         let impactMed = UIImpactFeedbackGenerator(style: .medium)
                         impactMed.impactOccurred()
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                             cartManager.addToCart(product: product)
                         }
                     }) {
-                        Label("Add to Cart", systemImage: "cart.badge.plus")
+                        Image(systemName: "cart.badge.plus")
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
@@ -496,12 +572,14 @@ struct ProductDetailView: View {
                     }
                     .disabled(product.stock != nil && (product.stock ?? 0) <= 0)
                     .opacity(product.stock != nil && (product.stock ?? 0) <= 0 ? 0.5 : 1.0)
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
         .background(Color(UIColor.systemBackground))
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: quantityInCart)
     }
     
     // MARK: — Reviews Section
@@ -552,14 +630,13 @@ struct ProductDetailView: View {
                         .padding(.vertical, 8)
                 }
             } else {
-                // Header
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Customer Reviews")
-                            .font(.headline)
-                            .fontWeight(.bold)
-                        
-                        if isReviewsExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Customer Reviews")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                            
                             HStack(spacing: 3) {
                                 Image(systemName: "star.fill")
                                     .foregroundColor(.primary)
@@ -572,182 +649,76 @@ struct ProductDetailView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                    }
-                    Spacer()
-                    
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            if authSession.currentUser != nil {
-                                isShowingWriteReviewSheet = true
-                            } else {
-                                isShowingGuestAlert = true
-                            }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "square.and.pencil")
-                                Text("Write a Review")
-                            }
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .clipShape(Capsule())
-                        }
+                        Spacer()
                         
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                isReviewsExpanded.toggle()
-                            }
-                        }) {
-                            Image(systemName: isReviewsExpanded ? "chevron.up" : "chevron.right")
-                                .font(.subheadline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.secondary)
-                                .frame(width: 32, height: 32)
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                if authSession.currentUser != nil {
+                                    isShowingWriteReviewSheet = true
+                                } else {
+                                    isShowingGuestAlert = true
+                                }
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square.and.pencil")
+                                    Text("Write a Review")
+                                }
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
                                 .background(Color(UIColor.secondarySystemBackground))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-                
-                if isReviewsExpanded {
-                    // Rating Breakdown Bars
-                    VStack(spacing: 6) {
-                        ratingRow(stars: 5, percentage: percentage(forStars: 5))
-                        ratingRow(stars: 4, percentage: percentage(forStars: 4))
-                        ratingRow(stars: 3, percentage: percentage(forStars: 3))
-                        ratingRow(stars: 2, percentage: percentage(forStars: 2))
-                        ratingRow(stars: 1, percentage: percentage(forStars: 1))
-                    }
-                    .padding(.vertical, 8)
-                    
-                    // Individual Review Cards
-                    VStack(spacing: 14) {
-                        ForEach(sortedReviews) { review in
-                            let displayName = review.userId.replacingOccurrences(of: "_", with: " ").capitalized
-                            let relativeDate: String = {
-                                if let dateStr = review.createdAt {
-                                    let formatter = ISO8601DateFormatter()
-                                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                                    if let date = formatter.date(from: dateStr) ?? ISO8601DateFormatter().date(from: dateStr) {
-                                        let relativeFormatter = RelativeDateTimeFormatter()
-                                        relativeFormatter.unitsStyle = .full
-                                        return relativeFormatter.localizedString(for: date, relativeTo: Date())
-                                    }
-                                }
-                                return "recently"
-                            }()
-                            
-                            let isOwnReview: Bool = {
-                                guard let currentUser = authSession.currentUser else { return false }
-                                let currentUserName = (currentUser.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
-                                let currentUserEmail = currentUser.email.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
-                                return review.userId.lowercased() == currentUserName || review.userId.lowercased() == currentUserEmail
-                            }()
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    // User Initials Avatar
-                                    Text(String(displayName.prefix(2)))
-                                        .font(.caption)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
-                                        .frame(width: 32, height: 32)
-                                        .background(Color.primary.opacity(0.8))
-                                        .clipShape(Circle())
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 4) {
-                                            Text(displayName)
-                                                .font(.subheadline)
-                                                .fontWeight(.semibold)
-                                            
-                                            Image(systemName: "checkmark.seal.fill")
-                                                .foregroundColor(.secondary)
-                                                .font(.caption2)
-                                        }
-                                        
-                                        Text(relativeDate)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    // Delete Review Button (Only if it's the user's own review)
-                                    if isOwnReview {
-                                        Button(action: {
-                                            Task {
-                                                do {
-                                                    try await APIService.shared.deleteReview(reviewId: review.id)
-                                                    let updated = try await APIService.shared.fetchReviews(productId: product.id)
-                                                    await MainActor.run {
-                                                        self.productReviews = updated
-                                                    }
-                                                } catch {
-                                                    print("Failed to delete review: \(error)")
-                                                }
-                                            }
-                                        }) {
-                                            Image(systemName: "trash")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                                .padding(4)
-                                        }
-                                        .padding(.trailing, 4)
-                                    }
-                                    
-                                    // Stars
-                                    HStack(spacing: 2) {
-                                        ForEach(1...5, id: \.self) { star in
-                                            Image(systemName: star <= review.rating ? "star.fill" : "star")
-                                                .font(.caption2)
-                                                .foregroundColor(star <= review.rating ? .primary : Color(UIColor.systemGray4))
-                                        }
-                                    }
-                                }
-                                
-                                if let bodyText = review.body {
-                                    Text(bodyText)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .lineSpacing(3)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
+                                .clipShape(Capsule())
                             }
-                            .padding(14)
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    isReviewsExpanded.toggle()
+                                }
+                            }) {
+                                Image(systemName: isReviewsExpanded ? "chevron.up" : "chevron.right")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 32, height: 32)
+                                    .background(Color(UIColor.secondarySystemBackground))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
+                    }
+                    
+                    if isReviewsExpanded {
+                        VStack(spacing: 6) {
+                            ratingRow(stars: 5, percentage: percentage(forStars: 5))
+                            ratingRow(stars: 4, percentage: percentage(forStars: 4))
+                            ratingRow(stars: 3, percentage: percentage(forStars: 3))
+                            ratingRow(stars: 2, percentage: percentage(forStars: 2))
+                            ratingRow(stars: 1, percentage: percentage(forStars: 1))
+                        }
+                        .padding(.top, 4)
                     }
                 }
             }
         }
     }
     
+    // MARK: — Rating Bar Row Subview
     private func ratingRow(stars: Int, percentage: Double) -> some View {
         HStack(spacing: 8) {
-            Text("\(stars)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .frame(width: 8)
-            
-            Image(systemName: "star.fill")
-                .foregroundColor(.secondary)
+            Text("\(stars) Star")
                 .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(width: 40, alignment: .leading)
             
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(UIColor.systemGray5))
-                        .frame(height: 6)
-                    
-                    RoundedRectangle(cornerRadius: 3)
+                    Capsule()
+                        .fill(Color(.systemGray5))
+                    Capsule()
                         .fill(Color.primary)
-                        .frame(width: geo.size.width * percentage, height: 6)
+                        .frame(width: geo.size.width * CGFloat(percentage))
                 }
             }
             .frame(height: 6)
@@ -755,94 +726,45 @@ struct ProductDetailView: View {
             Text("\(Int(percentage * 100))%")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-                .frame(width: 32, alignment: .trailing)
+                .frame(width: 35, alignment: .trailing)
         }
     }
 }
 
-// MARK: — Review Models
-struct ProductReview: Codable, Identifiable {
-    let id: String
-    let productId: Int
-    let userId: String
-    let rating: Int
-    let body: String?
-    let createdAt: String?
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case productId = "product_id"
-        case userId = "user_id"
-        case rating
-        case body
-        case createdAt = "created_at"
-    }
-}
-
+// MARK: - Write Review Sheet
 struct WriteReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
     let productId: Int
-    @Environment(\.dismiss) var dismiss
-    @ObservedObject private var authSession = AuthSession.shared
-    @State private var rating: Int = 5
+    let onSubmitted: () -> Void
+
+    @State private var selectedRating: Int = 5
     @State private var reviewBody: String = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String? = nil
-    
-    var onSubmissionSuccess: () -> Void
-    
+
     var body: some View {
         NavigationStack {
             Form {
-                if let currentUser = authSession.currentUser {
-                    Section(header: Text("Posting As").font(.caption).foregroundColor(.secondary)) {
-                        HStack(spacing: 8) {
-                            Text(currentUser.name ?? currentUser.email)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                            Spacer()
-                            Text("Logged In")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color(UIColor.systemGray5))
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-                
-                Section(header: Text("Rating").font(.caption).foregroundColor(.secondary)) {
-                    HStack(spacing: 12) {
+                Section("Rating") {
+                    HStack(spacing: 8) {
                         ForEach(1...5, id: \.self) { star in
-                            Image(systemName: star <= rating ? "star.fill" : "star")
-                                .font(.title3)
-                                .foregroundColor(star <= rating ? .primary : Color(UIColor.systemGray4))
-                                .onTapGesture {
-                                    rating = star
-                                }
+                            Image(systemName: star <= selectedRating ? "star.fill" : "star")
+                                .font(.system(size: 28))
+                                .foregroundColor(star <= selectedRating ? .orange : .gray.opacity(0.4))
+                                .onTapGesture { selectedRating = star }
                         }
                     }
                     .padding(.vertical, 4)
                 }
-                
-                Section(header: Text("Review Details").font(.caption).foregroundColor(.secondary)) {
-                    ZStack(alignment: .topLeading) {
-                        if reviewBody.isEmpty {
-                            Text("Share your thoughts about this product...")
-                                .foregroundColor(Color(UIColor.placeholderText))
-                                .font(.subheadline)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 8)
-                        }
-                        TextEditor(text: $reviewBody)
-                            .frame(minHeight: 120)
-                            .font(.subheadline)
-                    }
+
+                Section("Your Review") {
+                    TextEditor(text: $reviewBody)
+                        .frame(minHeight: 100)
                 }
-                
-                if let error = errorMessage {
+
+                if let err = errorMessage {
                     Section {
-                        Text(error)
+                        Text(err)
                             .foregroundColor(.red)
                             .font(.caption)
                     }
@@ -851,61 +773,147 @@ struct WriteReviewSheet: View {
             .navigationTitle("Write a Review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundColor(.primary)
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSubmitting {
-                        ProgressView()
-                    } else {
-                        Button("Submit") {
-                            submitReview()
-                        }
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                        .disabled(reviewBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Submit") {
+                        Task { await submit() }
                     }
+                    .fontWeight(.semibold)
+                    .disabled(reviewBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmitting)
                 }
             }
         }
     }
-    
-    private func submitReview() {
-        guard let currentUser = authSession.currentUser else {
-            errorMessage = "Please login to post a review."
+
+    private func submit() async {
+        guard let user = AuthSession.shared.currentUser else {
+            errorMessage = "You must be logged in to submit a review."
             return
         }
-        
         isSubmitting = true
         errorMessage = nil
-        
-        let rawName = currentUser.name ?? currentUser.email
-        let sanitizedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: " ", with: "_")
-            .lowercased()
-        
-        Task {
-            do {
-                _ = try await APIService.shared.submitReview(
-                    productId: productId,
-                    userId: sanitizedName,
-                    rating: rating,
-                    body: reviewBody
-                )
-                await MainActor.run {
-                    isSubmitting = false
-                    onSubmissionSuccess()
-                    dismiss()
-                }
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.isSubmitting = false
-                }
+        do {
+            _ = try await APIService.shared.submitReview(
+                productId: productId,
+                userId: user.id,
+                rating: selectedRating,
+                body: reviewBody.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            await MainActor.run {
+                onSubmitted()
+                dismiss()
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                isSubmitting = false
             }
         }
     }
 }
+
+// MARK: - Add To Registry Sheet
+struct AddToRegistrySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let product: Product
+    let onSuccess: (String) -> Void
+
+    @State private var registries: [MockRegistryExtended] = []
+    @State private var isLoading = true
+    @State private var isAdding: String? = nil  // registry id being added
+    @State private var errorMessage: String? = nil
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView("Loading registries…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if registries.isEmpty {
+                    VStack(spacing: 14) {
+                        Image(systemName: "gift")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No active registries")
+                            .font(.title3).fontWeight(.semibold)
+                        Text("Create a registry first from the Registry tab.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(registries) { registry in
+                        Button {
+                            Task { await addToRegistry(registry) }
+                        } label: {
+                            HStack(spacing: 14) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(registry.type.capitalized)
+                                        .font(.subheadline).fontWeight(.semibold)
+                                    Text(registry.date)
+                                        .font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if isAdding == registry.id {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "plus.circle")
+                                        .foregroundColor(.primary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAdding != nil)
+                    }
+                }
+            }
+            .navigationTitle("Add to Registry")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .task { await loadRegistries() }
+            .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    private func loadRegistries() async {
+        do {
+            try await MockRegistryService.shared.fetchRegistriesFromBackend()
+        } catch {
+            // Non-fatal: show whatever registries loaded
+        }
+        await MainActor.run {
+            registries = MockRegistryService.shared.registries
+            isLoading = false
+        }
+    }
+
+    private func addToRegistry(_ registry: MockRegistryExtended) async {
+        isAdding = registry.id
+        do {
+            try await MockRegistryService.shared.addProductToRegistry(registryId: registry.id, product: product)
+            await MainActor.run {
+                onSuccess("Added to \(registry.type.capitalized) registry!")
+                dismiss()
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                isAdding = nil
+            }
+        }
+    }
+}
+

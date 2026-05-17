@@ -495,6 +495,196 @@ class ChatViewModel: ObservableObject {
                 text: "Sure! Enter the registry owner's name or registry ID and I'll pull it up."
             ))
 
+        case .createRegistry(let type, let name):
+            do {
+                let newRegistry = try await MockRegistryService.shared.createRegistry(name: name, type: type, isoDate: "2026-06-20", location: "San Francisco, CA")
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Congratulations! I've created your new \(type.capitalized) Registry named \"\(newRegistry.name)\" (Code: \(newRegistry.code)) scheduled for Jun 20, 2026 in San Francisco, CA!\n\nYou can now say 'add [item name] to registry' to start building it.",
+                    attachments: [.quickReplies(["View my registry", "Add gold band skillet to registry"])]
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "I couldn't create the registry. Make sure you are logged in."
+                ))
+            }
+
+        case .viewRegistry:
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            if owned.isEmpty {
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "You don't have an active registry yet! Let's create one. What type of registry would you like to start?",
+                    attachments: [.quickReplies(["Create Wedding Registry", "Create Baby Shower Registry"])]
+                ))
+            } else {
+                let reg = owned[0]
+                let items = MockRegistryService.shared.registryItems[reg.id] ?? []
+                if items.isEmpty {
+                    replaceLoading(at: loadingIndex, with: ChatMessage(
+                        role: .assistant,
+                        text: "Your registry \"\(reg.name)\" is currently empty.\n\nYou can add items by saying 'add [product] to registry'.",
+                        attachments: [.quickReplies(["Add gold band skillet to registry", "Show recommendations"])]
+                    ))
+                } else {
+                    let summary = items.map { item in
+                        let name = item.products?.name ?? "Product"
+                        return "· \(name) ×\(item.quantityRequested) (Received: \(item.quantityReceived))"
+                    }.joined(separator: "\n")
+                    replaceLoading(at: loadingIndex, with: ChatMessage(
+                        role: .assistant,
+                        text: "Here are the items in your \"\(reg.name)\" registry:\n\n\(summary)",
+                        attachments: [.quickReplies(["Add item to registry", "Share my registry"])]
+                    ))
+                }
+            }
+
+        case .addProductToRegistry(let productName, let quantity):
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            if owned.isEmpty {
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "You don't have an active registry to add items to! Would you like to create one first?",
+                    attachments: [.quickReplies(["Create Wedding Registry", "Create Baby Shower Registry"])]
+                ))
+            } else if let name = productName, let product = findProduct(by: name) {
+                let reg = owned[0]
+                do {
+                    _ = try await RegistryService.shared.addItemToRegistry(registryId: reg.id, productId: product.id, quantity: quantity)
+                    try await MockRegistryService.shared.fetchRegistryDashboard(registryId: reg.id)
+                    replaceLoading(at: loadingIndex, with: ChatMessage(
+                        role: .assistant,
+                        text: "Added \(quantity)× \(product.name) to your \"\(reg.name)\" registry!",
+                        attachments: [.quickReplies(["View my registry", "Make \(product.name) most wanted"])]
+                    ))
+                } catch {
+                    replaceLoading(at: loadingIndex, with: ChatMessage(
+                        role: .assistant,
+                        text: "Failed to add item to registry: \(error.localizedDescription)"
+                    ))
+                }
+            } else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Which product would you like to add to your registry? I can look it up.",
+                    attachments: [.quickReplies(["Show recommendations", "Browse cookware"])]
+                ))
+            }
+
+        case .updateRegistryItem(let productName, let quantity, let isMostWanted, let isGroupGift):
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            guard !owned.isEmpty else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "You don't have an active registry."))
+                return
+            }
+            let reg = owned[0]
+            guard let name = productName, let product = findProduct(by: name) else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "I couldn't find that product in your catalog."))
+                return
+            }
+            let items = MockRegistryService.shared.registryItems[reg.id] ?? []
+            guard let item = items.first(where: { $0.products?.id == product.id }) else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "\"\(product.name)\" is not in your registry. Would you like to add it first?", attachments: [.quickReplies(["Add it now"])]))
+                return
+            }
+            
+            var updates: [String: Any] = [:]
+            if let qty = quantity { updates["quantity_requested"] = qty }
+            if let mw = isMostWanted { updates["is_most_wanted"] = mw }
+            if let gg = isGroupGift { updates["is_group_gift"] = gg }
+            
+            do {
+                _ = try await RegistryService.shared.updateRegistryItem(registryId: reg.id, itemId: item.id, updates: updates)
+                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: reg.id)
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Successfully updated \"\(product.name)\" in your registry!",
+                    attachments: [.quickReplies(["View my registry"])]
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "Error updating item: \(error.localizedDescription)"))
+            }
+
+        case .updateRegistryMetadata(let date, let location, let name):
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            guard !owned.isEmpty else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "You don't have an active registry to update."))
+                return
+            }
+            let reg = owned[0]
+            let finalName = name ?? reg.name
+            let finalDate = date ?? reg.date
+            let finalLoc = location ?? reg.location
+            
+            do {
+                let dateForApi = RegistryDateFormatter.isoDateString(fromDisplayString: finalDate) ?? finalDate
+                _ = try await RegistryService.shared.updateRegistry(registryId: reg.id, name: finalName, date: dateForApi, location: finalLoc)
+                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: reg.id)
+                try await MockRegistryService.shared.fetchRegistriesFromBackend()
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Registry settings updated successfully!\nName: \(finalName)\nDate: \(finalDate)\nLocation: \(finalLoc)",
+                    attachments: [.quickReplies(["View my registry"])]
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "Failed to update registry: \(error.localizedDescription)"))
+            }
+
+        case .deleteRegistryItem(let productName):
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            guard !owned.isEmpty else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "You don't have an active registry."))
+                return
+            }
+            let reg = owned[0]
+            guard let name = productName, let product = findProduct(by: name) else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "I couldn't find that product in your catalog."))
+                return
+            }
+            let items = MockRegistryService.shared.registryItems[reg.id] ?? []
+            guard let item = items.first(where: { $0.products?.id == product.id }) else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "\"\(product.name)\" is not in your registry."))
+                return
+            }
+            
+            do {
+                try await RegistryService.shared.deleteRegistryItem(registryId: reg.id, itemId: item.id)
+                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: reg.id)
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Removed \"\(product.name)\" from your registry.",
+                    attachments: [.quickReplies(["View my registry"])]
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "Error deleting item: \(error.localizedDescription)"))
+            }
+
+        case .deleteRegistry:
+            try? await MockRegistryService.shared.fetchRegistriesFromBackend()
+            let owned = MockRegistryService.shared.registries.filter { $0.isOwner }
+            guard !owned.isEmpty else {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "You don't have an active registry to delete."))
+                return
+            }
+            let reg = owned[0]
+            do {
+                try await RegistryService.shared.deleteRegistry(id: reg.id)
+                try await MockRegistryService.shared.fetchRegistriesFromBackend()
+                replaceLoading(at: loadingIndex, with: ChatMessage(
+                    role: .assistant,
+                    text: "Successfully deleted your registry \"\(reg.name)\". Let me know if you want to start a new one!",
+                    attachments: [.quickReplies(["Create Wedding Registry"])]
+                ))
+            } catch {
+                replaceLoading(at: loadingIndex, with: ChatMessage(role: .assistant, text: "Failed to delete registry: \(error.localizedDescription)"))
+            }
+
         // ── SUPPORT ───────────────────────────────────────────────────────
         case .stockCheck(let productId):
             let pid = productId ?? context.lastViewedProductId

@@ -42,6 +42,13 @@ enum ChatIntent {
     case registryGapAnalysis
     case registryShare
     case guestRegistryBuy(registryId: String?)
+    case createRegistry(type: String, name: String)
+    case viewRegistry
+    case addProductToRegistry(productName: String?, quantity: Int)
+    case updateRegistryItem(productName: String?, quantity: Int?, isMostWanted: Bool?, isGroupGift: Bool?)
+    case updateRegistryMetadata(date: String?, location: String?, name: String?)
+    case deleteRegistryItem(productName: String?)
+    case deleteRegistry
 
     // Watchlist / Alerts
     case watchPrice(productId: Int, threshold: Double)
@@ -132,8 +139,40 @@ struct ChatIntentRouter {
         }
         if matches(lower, ["eco", "sustainable", "non-toxic", "bpa", "organic", "environment"])  { return .sustainabilityFilter(query: lower) }
 
-        // Registry
-        if matches(lower, ["my registry", "add to registry", "wedding registry", "baby shower registry"]) { return .registryAdvisor }
+        // Registry CRUD operations
+        if matches(lower, ["delete my registry", "remove my registry", "destroy my registry", "cancel my registry"]) {
+            return .deleteRegistry
+        }
+        if matches(lower, ["delete ", "remove ", "take out of ", "take out "]) && matches(lower, ["registry"]) {
+            let prodName = extractRegistryProductName(lower)
+            return .deleteRegistryItem(productName: prodName)
+        }
+        if matches(lower, ["create ", "start ", "make ", "new "]) && matches(lower, ["registry"]) {
+            let type = lower.contains("wedding") ? "wedding" : (lower.contains("baby") ? "baby shower" : (lower.contains("anniversary") ? "anniversary" : "celebration"))
+            let name = extractRegistryName(lower) ?? "My \(type.capitalized) Registry"
+            return .createRegistry(type: type, name: name)
+        }
+        if matches(lower, ["add ", "put "]) && matches(lower, ["registry"]) {
+            let prodName = extractRegistryProductName(lower)
+            return .addProductToRegistry(productName: prodName, quantity: extractQuantity(lower))
+        }
+        if matches(lower, ["update registry date", "change registry date", "update registry location", "rename registry"]) {
+            let date = extractDateString(lower)
+            let loc = extractLocationString(lower)
+            let name = extractRegistryName(lower)
+            return .updateRegistryMetadata(date: date, location: loc, name: name)
+        }
+        if matches(lower, ["change ", "update ", "set ", "make "]) && matches(lower, ["registry"]) {
+            let prodName = extractRegistryProductName(lower)
+            let qty = lower.contains("quantity") || lower.contains("qty") ? extractQuantity(lower) : nil
+            let mostWanted = lower.contains("most wanted") ? true : (lower.contains("not most wanted") ? false : nil)
+            let groupGift = lower.contains("group gift") || lower.contains("group gifting") ? true : nil
+            return .updateRegistryItem(productName: prodName, quantity: qty, isMostWanted: mostWanted, isGroupGift: groupGift)
+        }
+        if matches(lower, ["view my registry", "show my registry", "what's in my registry", "view registry", "show registry", "get my registry", "display registry"]) {
+            return .viewRegistry
+        }
+        if matches(lower, ["my registry", "wedding registry", "baby shower registry"]) { return .registryAdvisor }
         if matches(lower, ["missing from registry", "registry gap", "what should i add"])                 { return .registryGapAnalysis }
         if matches(lower, ["share my registry", "send registry link"])                                     { return .registryShare }
 
@@ -259,5 +298,74 @@ struct ChatIntentRouter {
         }
         
         return clean.isEmpty ? nil : clean
+    }
+
+    private static func extractRegistryProductName(_ text: String) -> String? {
+        var clean = text.lowercased()
+        
+        let prefixes = [
+            "add ", "remove ", "delete ", "take out of ", "take out ", "change ", "update ", "set ", "make ",
+            "to my registry", "from my registry", "in my registry", "to registry", "from registry",
+            "quantity of ", "qty of ", "most wanted ", "group gift "
+        ]
+        
+        for p in prefixes {
+            clean = clean.replacingOccurrences(of: p, with: "")
+        }
+        
+        clean = clean.replacingOccurrences(of: #"\b\d+\b"#, with: "", options: .regularExpression)
+        
+        let helpers = ["please", "i want to", "can you", "one", "two", "three", "four", "five", "a", "an", "the", "in", "to", "from", "on"]
+        for h in helpers {
+            clean = clean.replacingOccurrences(of: #"\b\(h)\b"#, with: "", options: .regularExpression)
+        }
+        
+        clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean = clean.trimmingCharacters(in: CharacterSet(charactersIn: ".?!"))
+        
+        if clean.hasSuffix("s") && !clean.hasSuffix("ss") {
+            clean = String(clean.dropLast())
+        }
+        
+        return clean.isEmpty ? nil : clean
+    }
+
+    private static func extractRegistryName(_ text: String) -> String? {
+        let lower = text.lowercased()
+        if let range = text.range(of: "\"[^\"]+\"", options: .regularExpression) {
+            return String(text[range]).replacingOccurrences(of: "\"", with: "")
+        }
+        if let range = lower.range(of: "called ") {
+            return String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let range = lower.range(of: "named ") {
+            return String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private static func extractDateString(_ text: String) -> String? {
+        let pattern = #"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2},? \d{4}\b|\b\d{4}-\d{2}-\d{2}\b"#
+        guard let range = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        return String(text[range])
+    }
+
+    private static func extractLocationString(_ text: String) -> String? {
+        let lower = text.lowercased()
+        if let range = lower.range(of: "in ") {
+            var rest = String(text[range.upperBound...])
+            if let onRange = rest.lowercased().range(of: " on ") {
+                rest = String(rest[..<onRange.lowerBound])
+            }
+            return rest.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let range = lower.range(of: "at ") {
+            var rest = String(text[range.upperBound...])
+            if let onRange = rest.lowercased().range(of: " on ") {
+                rest = String(rest[..<onRange.lowerBound])
+            }
+            return rest.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 }
