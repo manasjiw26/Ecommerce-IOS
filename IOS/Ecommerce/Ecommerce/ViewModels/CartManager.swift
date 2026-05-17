@@ -3,10 +3,13 @@ import Combine
 import SwiftUI
 
 struct CartItem: Identifiable, Codable, Equatable {
-    var id = UUID()
     var backendId: Int?
     let product: Product
     var quantity: Int
+
+    // Stable identity for SwiftUI lists and persistence merging.
+    // This also prevents transient UI "duplication" during async refreshes.
+    var id: Int { product.id }
 
     static func == (lhs: CartItem, rhs: CartItem) -> Bool {
         lhs.product.id == rhs.product.id && lhs.quantity == rhs.quantity
@@ -74,7 +77,7 @@ class CartManager: ObservableObject {
                 }
             }
             self.items = byProduct.values.map { merged in
-                CartItem(id: UUID(), backendId: merged.backendId, product: merged.product, quantity: merged.quantity)
+                CartItem(backendId: merged.backendId, product: merged.product, quantity: merged.quantity)
             }
             saveCart()
         } catch {

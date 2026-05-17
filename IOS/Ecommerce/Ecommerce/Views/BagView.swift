@@ -33,129 +33,194 @@ struct BagView: View {
         !selectedItems.isEmpty && outOfStockSelected.isEmpty && !bagVM.isCheckingStock
     }
 
+    private var heroImageUrl: String? {
+        // Prefer a real product image from the bag; fall back to a stable demo image.
+        cartManager.items.first?.product.imageUrl
+            ?? "https://res.cloudinary.com/dl7sh9osm/image/upload/f_auto,q_auto/v1778918763/jason_briscoe_kitchen.jpg"
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
-        List {
-            if cartManager.items.isEmpty {
+            List {
+                // Hero header (Registry-style)
                 Section {
-                    VStack(spacing: 10) {
-                        Image(systemName: "bag")
-                            .font(.system(size: 44))
-                            .foregroundColor(.secondary)
-                        Text("Your bag is empty")
-                            .font(.headline)
-                        Text("Add items to unlock premium recommendations and bundles.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    BagHeroHeader(imageUrl: heroImageUrl)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
                 }
-            } else {
+
+                // Primary actions row
                 Section {
-                    BagIntelligenceView(
-                        coach: bagVM.coach,
-                        resurface: bagVM.resurface,
-                        occasion: occasionVM.currentOccasion,
-                        coachError: bagVM.coachError,
-                        onOpenSaved: { showSaved = true },
-                        onOpenAddOns: {
-                            // Nudge the list to the add-ons section.
-                            scrollToAddOnsTick += 1
+                    HStack(spacing: 14) {
+                        Button {
+                            showSaved = true
+                        } label: {
+                            Label("Saved", systemImage: "bookmark")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.black)
+                        .clipShape(Capsule())
+
+                        Button {
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 proxy.scrollTo("bag_addons_anchor", anchor: .top)
                             }
+                        } label: {
+                            Label("Complete Your Set", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity)
                         }
-                    )
-                }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                .listRowSeparator(.hidden)
-
-                Section("Items") {
-                    ForEach(cartManager.items) { item in
-                        BagItemRow(
-                            item: item,
-                            availableStock: bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999),
-                            isSelected: bagVM.selectedProductIds.contains(item.product.id),
-                            onToggleSelected: { bagVM.selectedProductIds.toggle(item.product.id) },
-                            isEngravingOn: bagVM.addOnEngraving.contains(item.product.id),
-                            onToggleEngraving: { bagVM.addOnEngraving.toggle(item.product.id) },
-                            isProtectionOn: bagVM.addOnProtection.contains(item.product.id),
-                            onToggleProtection: { bagVM.addOnProtection.toggle(item.product.id) },
-                            onSaveForLater: {
-                                Task {
-                                    try? await SavedForLaterService.shared.save(
-                                        deviceId: RecommendationEngine.shared.deviceId,
-                                        productId: item.product.id
-                                    )
-                                    bagVM.selectedProductIds.remove(item.product.id)
-                                    cartManager.removeLineItem(product: item.product)
-                                    await savedVM.refresh()
-                                    bagVM.savedCount = savedVM.items.count
-                                }
-                            }
-                        )
-                        .environmentObject(cartManager)
-                        .swipeActions(edge: .leading) {
-                            Button {
-                                Task {
-                                    try? await SavedForLaterService.shared.save(
-                                        deviceId: RecommendationEngine.shared.deviceId,
-                                        productId: item.product.id
-                                    )
-                                    bagVM.selectedProductIds.remove(item.product.id)
-                                    cartManager.removeLineItem(product: item.product)
-                                    await savedVM.refresh()
-                                    bagVM.savedCount = savedVM.items.count
-                                }
-                            } label: {
-                                Label("Save", systemImage: "bookmark")
-                            }
-                            .tint(.orange)
-                        }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                bagVM.selectedProductIds.remove(item.product.id)
-                                undo = UndoState(product: item.product, quantity: item.quantity)
-                                cartManager.removeLineItem(product: item.product)
-                                Task {
-                                    try? await Task.sleep(nanoseconds: 4_500_000_000)
-                                    if undo?.product.id == item.product.id { undo = nil }
-                                }
-                            } label: {
-                                Label("Remove", systemImage: "trash")
-                            }
-                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.black)
+                        .clipShape(Capsule())
                     }
-                }
-
-                Section("Complete Your Set") {
-                    Color.clear
-                        .frame(height: 1)
-                        .id("bag_addons_anchor")
-                    BagBundleStrip(
-                        bundle: bagVM.coach == nil ? nil : nil, // coach doesn’t carry products; strip uses bundle endpoint below
-                        products: bagVMBundleProducts,
-                        onAdd: { p in cartManager.addToCart(product: p) }
-                    )
+                    .padding(.vertical, 6)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .listRowSeparator(.hidden)
                 }
 
-                Section("Pair it with") {
-                    PairItWithSectionView(viewModel: pairItWithVM)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
+                if cartManager.items.isEmpty {
+                    Section {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bag")
+                                .font(.title)
+                                .foregroundColor(.secondary)
+                            Text("Your bag is empty")
+                                .font(.headline)
+                            Text("Add items to unlock premium recommendations and bundles.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                    }
+                    .listRowSeparator(.hidden)
+                } else {
+                    Section {
+                        BagIntelligenceView(
+                            coach: bagVM.coach,
+                            resurface: bagVM.resurface,
+                            occasion: occasionVM.currentOccasion,
+                            coachError: bagVM.coachError,
+                            onOpenSaved: { showSaved = true },
+                            onOpenAddOns: {
+                                scrollToAddOnsTick += 1
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    proxy.scrollTo("bag_addons_anchor", anchor: .top)
+                                }
+                            }
+                        )
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowSeparator(.hidden)
+
+                    Section(header:
+                        Text("My Bag")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+                            .textCase(nil)
+                    ) {
+                        ForEach(cartManager.items) { item in
+                            BagItemRow(
+                                item: item,
+                                availableStock: bagVM.stockMap[item.product.id] ?? (item.product.stock ?? 999),
+                                isSelected: bagVM.selectedProductIds.contains(item.product.id),
+                                onToggleSelected: { bagVM.selectedProductIds.toggle(item.product.id) },
+                                isEngravingOn: bagVM.addOnEngraving.contains(item.product.id),
+                                onToggleEngraving: { bagVM.addOnEngraving.toggle(item.product.id) },
+                                isProtectionOn: bagVM.addOnProtection.contains(item.product.id),
+                                onToggleProtection: { bagVM.addOnProtection.toggle(item.product.id) },
+                                onSaveForLater: {
+                                    Task {
+                                        try? await SavedForLaterService.shared.save(
+                                            deviceId: RecommendationEngine.shared.deviceId,
+                                            productId: item.product.id
+                                        )
+                                        bagVM.selectedProductIds.remove(item.product.id)
+                                        cartManager.removeLineItem(product: item.product)
+                                        await savedVM.refresh()
+                                        bagVM.savedCount = savedVM.items.count
+                                    }
+                                }
+                            )
+                            .environmentObject(cartManager)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color(.systemBackground))
+                                    .shadow(color: Color.black.opacity(0.06), radius: 12, x: 0, y: 6)
+                            )
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    Task {
+                                        try? await SavedForLaterService.shared.save(
+                                            deviceId: RecommendationEngine.shared.deviceId,
+                                            productId: item.product.id
+                                        )
+                                        bagVM.selectedProductIds.remove(item.product.id)
+                                        cartManager.removeLineItem(product: item.product)
+                                        await savedVM.refresh()
+                                        bagVM.savedCount = savedVM.items.count
+                                    }
+                                } label: {
+                                    Label("Save", systemImage: "bookmark")
+                                }
+                                .tint(.orange)
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    bagVM.selectedProductIds.remove(item.product.id)
+                                    undo = UndoState(product: item.product, quantity: item.quantity)
+                                    cartManager.removeLineItem(product: item.product)
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 4_500_000_000)
+                                        if undo?.product.id == item.product.id { undo = nil }
+                                    }
+                                } label: {
+                                    Label("Remove", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+
+                    Section(header:
+                        Text("Complete Your Set")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+                            .textCase(nil)
+                    ) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bag_addons_anchor")
+                        BagBundleStrip(
+                            bundle: bagVM.coach == nil ? nil : nil,
+                            products: bagVMBundleProducts,
+                            onAdd: { p in cartManager.addToCart(product: p) }
+                        )
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowSeparator(.hidden)
+                    }
                 }
             }
         }
-        }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("Bag (\(selectedItems.count))")
+        .background(Color(.systemBackground))
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Bag (\(selectedItems.count))")
+                    .font(.headline)
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSaved = true } label: {
                     ZStack(alignment: .topTrailing) {
@@ -272,11 +337,56 @@ private struct BagFooter: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.black)
+            .clipShape(Capsule())
+            .controlSize(.large)
             .disabled(!canCheckout)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+    }
+}
+
+private struct BagHeroHeader: View {
+    let imageUrl: String?
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let imageUrl {
+                CachedImageView(urlString: imageUrl) { img in
+                    img.resizable().scaledToFill()
+                } placeholder: {
+                    Color(.systemGray5)
+                }
+                .frame(height: 260)
+                .clipped()
+            } else {
+                Color(.systemGray5)
+                    .frame(height: 260)
+            }
+
+            LinearGradient(colors: [Color.black.opacity(0.0), Color.black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 260)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("THE SHOPPING BAG")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                Text("Complete your kitchen, beautifully.")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 18)
+        }
     }
 }
 

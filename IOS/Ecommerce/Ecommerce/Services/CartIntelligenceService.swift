@@ -83,7 +83,7 @@ struct NextTier: Codable {
     let threshold: Double
     let remaining: Double
 }
-}
+
 
 final class CartIntelligenceService {
     static let shared = CartIntelligenceService()

@@ -89,7 +89,10 @@ struct BagIntelligenceView: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.06), radius: 12, x: 0, y: 6)
+        )
     }
 }
