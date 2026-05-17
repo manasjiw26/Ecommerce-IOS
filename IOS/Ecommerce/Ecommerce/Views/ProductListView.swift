@@ -381,6 +381,7 @@ struct ProductCardView: View {
     let product: Product
     let width: CGFloat
     let height: CGFloat
+    @State private var isSaved = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -388,12 +389,29 @@ struct ProductCardView: View {
             
             // Info
             VStack(alignment: .leading, spacing: 4) {
-                Text(product.name)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                HStack(alignment: .top, spacing: 4) {
+                    Text(product.name)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    
+                    Spacer(minLength: 4)
+                    
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(isSaved ? .primary : .secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            let impact = UIImpactFeedbackGenerator(style: .light)
+                            impact.impactOccurred()
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isSaved.toggle()
+                            }
+                        }
+                }
                 
                 Text("$\(String(format: "%.2f", product.price))")
                     .font(.caption)

@@ -48,6 +48,7 @@ app.use('/ai', require('./routes/ai'));
 app.use('/ai/registry', require('./routes/ai_registry'));
 app.use('/registry', require('./routes/registry'));
 app.use('/chat', require('./routes/chat'));
+app.use('/reviews', require('./routes/reviews'));
 
 const { supabase } = require('./supabaseClient');
 

@@ -6,9 +6,71 @@ struct ProductDetailView: View {
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
     @ObservedObject private var recoEngine = RecommendationEngine.shared
+    @ObservedObject private var authSession = AuthSession.shared
     @State private var similarProducts: [Product] = []
     @State private var isLoadingSimilar = true
+    @State private var isSaved = false
     private let imageHeight: CGFloat = 340
+    
+    @State private var productReviews: [ProductReview] = []
+    @State private var isLoadingReviews = true
+    @State private var isShowingWriteReviewSheet = false
+    @State private var isShowingGuestAlert = false
+    @State private var isReviewsExpanded = false
+    
+    private var averageRating: Double {
+        guard !productReviews.isEmpty else { return 0.0 }
+        let sum = productReviews.reduce(0) { $0 + $1.rating }
+        return Double(sum) / Double(productReviews.count)
+    }
+    
+    private var sortedReviews: [ProductReview] {
+        guard let currentUser = authSession.currentUser else { return productReviews }
+        let currentUserName = (currentUser.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
+        let currentUserEmail = currentUser.email.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
+        
+        return productReviews.sorted { a, b in
+            let aIsCurrent = (a.userId.lowercased() == currentUserName || a.userId.lowercased() == currentUserEmail)
+            let bIsCurrent = (b.userId.lowercased() == currentUserName || b.userId.lowercased() == currentUserEmail)
+            if aIsCurrent && !bIsCurrent {
+                return true
+            } else if !aIsCurrent && bIsCurrent {
+                return false
+            }
+            return false
+        }
+    }
+    
+    private func percentage(forStars stars: Int) -> Double {
+        guard !productReviews.isEmpty else { return 0.0 }
+        let count = productReviews.filter { $0.rating == stars }.count
+        return Double(count) / Double(productReviews.count)
+    }
+    
+    private func shareProduct() {
+        let text = "Check out this amazing product: \(product.name) on our store!"
+        let url = URL(string: "https://ecommerce.example.com/products/\(product.id)") ?? URL(string: "https://ecommerce.example.com")!
+        
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootVC = windowScene.windows.first?.rootViewController {
+            
+            var topVC = rootVC
+            while let presented = topVC.presentedViewController {
+                topVC = presented
+            }
+            
+            let activityVC = UIActivityViewController(activityItems: [text, url], applicationActivities: nil)
+            
+            // iPad popover presentation compatibility
+            if let popover = activityVC.popoverPresentationController {
+                popover.sourceView = topVC.view
+                popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+            
+            topVC.present(activityVC, animated: true, completion: nil)
+        }
+    }
     
     var quantityInCart: Int {
         cartManager.items.first(where: { $0.product.id == product.id })?.quantity ?? 0
@@ -34,10 +96,42 @@ struct ProductDetailView: View {
                                 .tracking(1.5)
                         }
                         
-                        Text(product.name)
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .center, spacing: 8) {
+                            Text(product.name)
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .fixedSize(horizontal: false, vertical: true)
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                generator.impactOccurred()
+                                shareProduct()
+                            }) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 40, height: 40)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Button(action: {
+                                let impact = UIImpactFeedbackGenerator(style: .medium)
+                                impact.impactOccurred()
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    isSaved.toggle()
+                                }
+                            }) {
+                                Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(isSaved ? .primary : .secondary)
+                                    .frame(width: 40, height: 40)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
                         
                         Text("$\(String(format: "%.2f", product.price))")
                             .font(.title2)
@@ -47,13 +141,25 @@ struct ProductDetailView: View {
                     
                     // Stock indicator
                     if let stock = product.stock {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(stock > 0 ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(stock > 0 ? "In Stock (\(stock) remaining)" : "Out of Stock")
-                                .font(.caption)
-                                .foregroundColor(stock > 0 ? .green : .red)
+                        if stock == 0 {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text("Out of Stock")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+                        } else if stock <= 3 {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color.orange)
+                                    .frame(width: 8, height: 8)
+                                Text("Only \(stock) left!")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.orange)
+                            }
                         }
                     }
                     
@@ -99,14 +205,17 @@ struct ProductDetailView: View {
                         }
                     }
                     
-                    // MARK: — Recommendations Carousel
+                    // MARK: — Customer Reviews
+                    reviewsSection
+                    
+                    // MARK: — Suggested Matches Carousel (Moved below Customer Reviews)
                     if isLoadingSimilar {
                         Divider().padding(.top, 4)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .font(.subheadline)
-                                Text("Suggested Products")
+                                Text("You May Also Like")
                                     .font(.headline)
                             }
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -129,7 +238,7 @@ struct ProductDetailView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .font(.subheadline)
-                                Text("Suggested Products")
+                                Text("You May Also Like")
                                     .font(.headline)
                             }
                             
@@ -222,6 +331,39 @@ struct ProductDetailView: View {
                 self.similarProducts = results
                 self.isLoadingSimilar = false
             }
+            
+            // Load reviews dynamically from Supabase via Express API
+            do {
+                let fetchedReviews = try await APIService.shared.fetchReviews(productId: product.id)
+                await MainActor.run {
+                    self.productReviews = fetchedReviews
+                    self.isLoadingReviews = false
+                }
+            } catch {
+                print("Failed to fetch reviews: \(error)")
+                await MainActor.run {
+                    self.isLoadingReviews = false
+                }
+            }
+        }
+        .sheet(isPresented: $isShowingWriteReviewSheet) {
+            WriteReviewSheet(productId: product.id) {
+                Task {
+                    do {
+                        let updated = try await APIService.shared.fetchReviews(productId: product.id)
+                        await MainActor.run {
+                            self.productReviews = updated
+                        }
+                    } catch {
+                        print("Failed to refresh reviews: \(error)")
+                    }
+                }
+            }
+        }
+        .alert("Authentication Required", isPresented: $isShowingGuestAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please login first to write a review.")
         }
     }
 
@@ -336,5 +478,410 @@ struct ProductDetailView: View {
             .padding(.vertical, 12)
         }
         .background(Color(UIColor.systemBackground))
+    }
+    
+    // MARK: — Reviews Section
+    private var reviewsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Divider().padding(.vertical, 8)
+            
+            if isLoadingReviews {
+                HStack {
+                    Spacer()
+                    ProgressView("Loading reviews...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 20)
+            } else if productReviews.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Customer Reviews")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        Spacer()
+                        Button(action: {
+                            if authSession.currentUser != nil {
+                                isShowingWriteReviewSheet = true
+                            } else {
+                                isShowingGuestAlert = true
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.pencil")
+                                Text("Write a Review")
+                            }
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    
+                    Text("No reviews yet. Be the first to share your thoughts!")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                }
+            } else {
+                // Header
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Customer Reviews")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                        
+                        if isReviewsExpanded {
+                            HStack(spacing: 3) {
+                                Image(systemName: "star.fill")
+                                    .foregroundColor(.primary)
+                                    .font(.caption)
+                                Text(String(format: "%.1f", averageRating))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                Text("(\(productReviews.count))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    Spacer()
+                    
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            if authSession.currentUser != nil {
+                                isShowingWriteReviewSheet = true
+                            } else {
+                                isShowingGuestAlert = true
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.pencil")
+                                Text("Write a Review")
+                            }
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(Capsule())
+                        }
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isReviewsExpanded.toggle()
+                            }
+                        }) {
+                            Image(systemName: isReviewsExpanded ? "chevron.up" : "chevron.right")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                                .frame(width: 32, height: 32)
+                                .background(Color(UIColor.secondarySystemBackground))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                
+                if isReviewsExpanded {
+                    // Rating Breakdown Bars
+                    VStack(spacing: 6) {
+                        ratingRow(stars: 5, percentage: percentage(forStars: 5))
+                        ratingRow(stars: 4, percentage: percentage(forStars: 4))
+                        ratingRow(stars: 3, percentage: percentage(forStars: 3))
+                        ratingRow(stars: 2, percentage: percentage(forStars: 2))
+                        ratingRow(stars: 1, percentage: percentage(forStars: 1))
+                    }
+                    .padding(.vertical, 8)
+                    
+                    // Individual Review Cards
+                    VStack(spacing: 14) {
+                        ForEach(sortedReviews) { review in
+                            let displayName = review.userId.replacingOccurrences(of: "_", with: " ").capitalized
+                            let relativeDate: String = {
+                                if let dateStr = review.createdAt {
+                                    let formatter = ISO8601DateFormatter()
+                                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                                    if let date = formatter.date(from: dateStr) ?? ISO8601DateFormatter().date(from: dateStr) {
+                                        let relativeFormatter = RelativeDateTimeFormatter()
+                                        relativeFormatter.unitsStyle = .full
+                                        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+                                    }
+                                }
+                                return "recently"
+                            }()
+                            
+                            let isOwnReview: Bool = {
+                                guard let currentUser = authSession.currentUser else { return false }
+                                let currentUserName = (currentUser.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
+                                let currentUserEmail = currentUser.email.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
+                                return review.userId.lowercased() == currentUserName || review.userId.lowercased() == currentUserEmail
+                            }()
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    // User Initials Avatar
+                                    Text(String(displayName.prefix(2)))
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
+                                        .frame(width: 32, height: 32)
+                                        .background(Color.primary.opacity(0.8))
+                                        .clipShape(Circle())
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 4) {
+                                            Text(displayName)
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                            
+                                            Image(systemName: "checkmark.seal.fill")
+                                                .foregroundColor(.secondary)
+                                                .font(.caption2)
+                                        }
+                                        
+                                        Text(relativeDate)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    // Delete Review Button (Only if it's the user's own review)
+                                    if isOwnReview {
+                                        Button(action: {
+                                            Task {
+                                                do {
+                                                    try await APIService.shared.deleteReview(reviewId: review.id)
+                                                    let updated = try await APIService.shared.fetchReviews(productId: product.id)
+                                                    await MainActor.run {
+                                                        self.productReviews = updated
+                                                    }
+                                                } catch {
+                                                    print("Failed to delete review: \(error)")
+                                                }
+                                            }
+                                        }) {
+                                            Image(systemName: "trash")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .padding(4)
+                                        }
+                                        .padding(.trailing, 4)
+                                    }
+                                    
+                                    // Stars
+                                    HStack(spacing: 2) {
+                                        ForEach(1...5, id: \.self) { star in
+                                            Image(systemName: star <= review.rating ? "star.fill" : "star")
+                                                .font(.caption2)
+                                                .foregroundColor(star <= review.rating ? .primary : Color(UIColor.systemGray4))
+                                        }
+                                    }
+                                }
+                                
+                                if let bodyText = review.body {
+                                    Text(bodyText)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineSpacing(3)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(14)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func ratingRow(stars: Int, percentage: Double) -> some View {
+        HStack(spacing: 8) {
+            Text("\(stars)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 8)
+            
+            Image(systemName: "star.fill")
+                .foregroundColor(.secondary)
+                .font(.caption2)
+            
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(UIColor.systemGray5))
+                        .frame(height: 6)
+                    
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.primary)
+                        .frame(width: geo.size.width * percentage, height: 6)
+                }
+            }
+            .frame(height: 6)
+            
+            Text("\(Int(percentage * 100))%")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(width: 32, alignment: .trailing)
+        }
+    }
+}
+
+// MARK: — Review Models
+struct ProductReview: Codable, Identifiable {
+    let id: String
+    let productId: Int
+    let userId: String
+    let rating: Int
+    let body: String?
+    let createdAt: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case productId = "product_id"
+        case userId = "user_id"
+        case rating
+        case body
+        case createdAt = "created_at"
+    }
+}
+
+struct WriteReviewSheet: View {
+    let productId: Int
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject private var authSession = AuthSession.shared
+    @State private var rating: Int = 5
+    @State private var reviewBody: String = ""
+    @State private var isSubmitting = false
+    @State private var errorMessage: String? = nil
+    
+    var onSubmissionSuccess: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let currentUser = authSession.currentUser {
+                    Section(header: Text("Posting As").font(.caption).foregroundColor(.secondary)) {
+                        HStack(spacing: 8) {
+                            Text(currentUser.name ?? currentUser.email)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Text("Logged In")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(UIColor.systemGray5))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                
+                Section(header: Text("Rating").font(.caption).foregroundColor(.secondary)) {
+                    HStack(spacing: 12) {
+                        ForEach(1...5, id: \.self) { star in
+                            Image(systemName: star <= rating ? "star.fill" : "star")
+                                .font(.title3)
+                                .foregroundColor(star <= rating ? .primary : Color(UIColor.systemGray4))
+                                .onTapGesture {
+                                    rating = star
+                                }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                Section(header: Text("Review Details").font(.caption).foregroundColor(.secondary)) {
+                    ZStack(alignment: .topLeading) {
+                        if reviewBody.isEmpty {
+                            Text("Share your thoughts about this product...")
+                                .foregroundColor(Color(UIColor.placeholderText))
+                                .font(.subheadline)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 8)
+                        }
+                        TextEditor(text: $reviewBody)
+                            .frame(minHeight: 120)
+                            .font(.subheadline)
+                    }
+                }
+                
+                if let error = errorMessage {
+                    Section {
+                        Text(error)
+                            .foregroundColor(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("Write a Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(.primary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Button("Submit") {
+                            submitReview()
+                        }
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                        .disabled(reviewBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func submitReview() {
+        guard let currentUser = authSession.currentUser else {
+            errorMessage = "Please login to post a review."
+            return
+        }
+        
+        isSubmitting = true
+        errorMessage = nil
+        
+        let rawName = currentUser.name ?? currentUser.email
+        let sanitizedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "_")
+            .lowercased()
+        
+        Task {
+            do {
+                _ = try await APIService.shared.submitReview(
+                    productId: productId,
+                    userId: sanitizedName,
+                    rating: rating,
+                    body: reviewBody
+                )
+                await MainActor.run {
+                    isSubmitting = false
+                    onSubmissionSuccess()
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.isSubmitting = false
+                }
+            }
+        }
     }
 }
