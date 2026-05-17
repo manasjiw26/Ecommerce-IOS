@@ -1,12 +1,12 @@
-# iOS Ecommerce App
+# ShopEase iOS Ecommerce App
 
-Hearth & Table is a full-stack iOS ecommerce app for home, kitchen, gift, and registry shopping. It includes product browsing, authentication, cart, checkout, orders, AI search, visual search, chat assistance, and registry features.
+ShopEase is a full-stack iOS ecommerce app for home, kitchen, gift, and registry shopping. It includes product browsing, authentication, cart, checkout, orders, AI search, visual search, chat assistance, and registry features.
 
 ## Tech Stack
 
 | Part | Technology |
 | --- | --- |
-| iOS App | Swift, SwiftUI, Combine, async/await |
+| iOS App | Swift, SwiftUI |
 | Architecture | MVVM |
 | Backend | Node.js, Express.js |
 | Database | Supabase PostgreSQL |
@@ -15,7 +15,50 @@ Hearth & Table is a full-stack iOS ecommerce app for home, kitchen, gift, and re
 | AI Features | Gemini, Groq, Ollama Cloud fallback |
 | Search | Semantic search, autocomplete, fuzzy search, recent/trending searches |
 | Visual Search | Apple Vision, CLIP image similarity |
-| Hosting | Render or any Node.js hosting provider |
+| Media Storage | Cloudinary |
+| Hosting | Render |
+
+## Live Backend
+
+The backend is already hosted and running at:
+
+```
+https://ecommerce-ios.onrender.com
+```
+
+Health check:
+
+```
+https://ecommerce-ios.onrender.com/health
+```
+
+> **Note:** The backend is hosted on Render's free tier. The first request after a period of inactivity may take 30–60 seconds while the server wakes up. Subsequent requests are fast. If the live backend is unresponsive, you can run it locally — see [Running the Backend Locally](#running-the-backend-locally-optional) below.
+
+## Running the iOS App
+
+No backend setup is needed. The backend is already live.
+
+**Steps:**
+
+1. Open the Xcode project:
+
+```text
+IOS/Ecommerce/Ecommerce.xcodeproj
+```
+
+2. Make sure `Config.swift` points to the hosted backend:
+
+```swift
+import Foundation
+
+struct Config {
+    static let apiBaseURL = "https://ecommerce-ios.onrender.com"
+}
+```
+
+3. Select a simulator or connected iPhone in Xcode and press **Run**.
+
+That's it — the app will connect to the live backend automatically.
 
 ## Project Structure
 
@@ -82,11 +125,38 @@ IOS/Ecommerce/
 | Chat | `/chat` |
 | Registry | `/registry`, `/ai/registry` |
 
-## Environment Variables
+## Running the Backend Locally (Optional)
 
-The backend uses a local `.env` file. This file should not be uploaded to GitHub.
+If the live backend is down or you want to run it locally for development:
 
-Example `Backend/.env`:
+1. Create `Backend/.env` based on the example below.
+2. Run:
+
+```bash
+cd Backend
+npm install
+npm start
+```
+
+3. Update `Config.swift` to point to your local backend:
+
+```swift
+static let apiBaseURL = "http://127.0.0.1:3000"
+```
+
+For testing on a real iPhone with a local backend, use your Mac's Wi-Fi IP instead:
+
+```swift
+static let apiBaseURL = "http://192.168.1.x:3000"
+```
+
+Find your Mac's IP:
+
+```bash
+ipconfig getifaddr en0
+```
+
+### Backend Environment Variables
 
 ```env
 PORT=3000
@@ -95,9 +165,6 @@ NODE_ENV=development
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-RAZORPAY_KEY_ID=rzp_test_your_key_id
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
 
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-2.0-flash
@@ -110,124 +177,17 @@ OLLAMA_CLOUD_AUTH=optional_auth_value
 REDIS_URL=redis://localhost:6379
 ```
 
-Private values such as Supabase service role key, Razorpay secret, Gemini key, Groq key, and Ollama auth token should only be stored in `.env` locally or in the hosting provider’s environment variable dashboard.
-
-## Required Backend Config
-
-Minimum required variables:
-
-```env
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-RAZORPAY_KEY_ID=
-RAZORPAY_KEY_SECRET=
-```
-
-Optional AI variables:
-
-```env
-GEMINI_API_KEY=
-GROQ_API_KEY=
-OLLAMA_CLOUD_URL=
-OLLAMA_CLOUD_AUTH=
-REDIS_URL=
-```
-
-## iOS Config
-
-The iOS app reads backend and payment config from:
-
-```text
-IOS/Ecommerce/Ecommerce/Config.swift
-```
-
-Example:
-
-```swift
-import Foundation
-
-struct Config {
-    static let razorpayKey = "rzp_test_your_key_id"
-
-    #if DEBUG
-    static let apiBaseURL = "http://127.0.0.1:3000"
-    #else
-    static let apiBaseURL = "https://your-hosted-backend-url.com"
-    #endif
-}
-```
-
-For simulator testing, `127.0.0.1` can be used.
-
-For real iPhone testing, use the Mac’s local Wi-Fi IP:
-
-```swift
-static let apiBaseURL = "http://192.168.1.11:3000"
-```
-
-## Local Backend Setup
-
-```bash
-cd Backend
-npm install
-npm start
-```
-
-Local backend URL:
-
-```text
-http://127.0.0.1:3000
-```
-
-Health check:
-
-```text
-http://127.0.0.1:3000/health
-```
-
-## Local iOS Setup
-
-Open the Xcode project:
-
-```text
-IOS/Ecommerce/Ecommerce.xcodeproj
-```
-
-The app can be run on an iPhone simulator or a connected iPhone from Xcode.
-
-## Real iPhone Local Testing
-
-For real iPhone testing with a backend running on Mac:
-
-```text
-Mac and iPhone must be on the same Wi-Fi.
-Backend should run on the Mac.
-Config.swift should use the Mac Wi-Fi IP instead of 127.0.0.1.
-```
-
-Mac IP command:
-
-```bash
-ipconfig getifaddr en0
-```
-
-Example iPhone API URL:
-
-```swift
-static let apiBaseURL = "http://192.168.1.11:3000"
-```
+> Razorpay keys (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`) are already configured in the hosted environment and do not need to be added manually.
 
 ## Supabase Database
 
-The backend depends on Supabase tables for products, users, cart, orders, events, registry, search, chat, and AI features.
-
-Migration files are stored in:
+Migration files are in:
 
 ```text
 Backend/migrations/
 ```
 
-Important migration files:
+Key migration files:
 
 ```text
 search_analytics.sql
@@ -237,28 +197,10 @@ chatbot_schema.sql
 v3_ambitious_features.sql
 ```
 
-## Hosting
-
-The backend can be hosted on Render or any Node.js hosting service.
-
-Render config is included:
-
-```text
-Backend/render.yaml
-```
-
-Production environment variables should be added in the hosting dashboard instead of uploading `.env`.
-
-For production iOS builds, update `Config.swift` with the hosted backend URL:
-
-```swift
-static let apiBaseURL = "https://your-hosted-backend-url.com"
-```
-
 ## Security Notes
 
 - `.env` should not be committed to GitHub.
 - `SUPABASE_SERVICE_ROLE_KEY` must never be exposed in the iOS app.
 - Razorpay secret must stay on the backend only.
 - API keys for Gemini, Groq, and Ollama should stay in backend environment variables.
-- `Config.swift` should only contain public client-side values such as backend URL and Razorpay public key ID.
+- `Config.swift` should only contain public client-side values such as the backend URL and Razorpay public key ID.
