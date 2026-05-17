@@ -86,12 +86,10 @@ struct RazorpayCheckoutView: View {
                             amount: cartManager.total,
                             razorpayKey: razorpayTestKey,
                             onPaymentSuccess: { pid in
-                                // Save order to OrderManager before clearing cart
-                                OrderManager.shared.addOrder(
-                                    from: cartManager.items,
-                                    total: cartManager.total,
-                                    paymentId: pid
-                                )
+                                // Refresh orders from backend
+                                Task {
+                                    await OrderManager.shared.fetchOrders()
+                                }
                                 paymentId = pid
                                 paymentStatus = "SUCCESS"
                             },

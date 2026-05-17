@@ -172,7 +172,6 @@ struct CheckoutFlowView: View {
 
             // Update local orders list (Orders tab) and clear cart (local + backend will clear too).
             await MainActor.run {
-                OrderManager.shared.addOrder(from: effectiveItems, total: effectiveTotal, paymentId: paymentId)
                 // If we're doing selective checkout, remove only the checked out line items.
                 if checkoutItems.isEmpty {
                     cartManager.removeAll()
@@ -182,6 +181,7 @@ struct CheckoutFlowView: View {
                     }
                 }
             }
+            await OrderManager.shared.fetchOrders()
 
             path.append(.confirmation)
         } catch {

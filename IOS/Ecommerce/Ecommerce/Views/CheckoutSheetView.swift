@@ -629,11 +629,11 @@ struct CheckoutSheetView: View {
             let order = obj["order"] as? [String: Any]
             let orderId = (order?["id"] as? String) ?? UUID().uuidString
             await MainActor.run {
-                OrderManager.shared.addOrder(from: checkoutItems, total: grandTotal, paymentId: paymentId)
                 for item in checkoutItems { cartManager.removeLineItem(product: item.product) }
                 cartManager.removePromo()
                 withAnimation { confirmation = Confirmation(orderId: orderId, total: grandTotal, paymentId: paymentId) }
             }
+            await OrderManager.shared.fetchOrders()
         } catch {
             errorMessage = error.localizedDescription
         }
