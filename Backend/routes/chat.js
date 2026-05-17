@@ -92,7 +92,7 @@ router.post('/', async (req, res) => {
                 }));
 
                 const geminiResponse = await ai.models.generateContent({
-                    model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-1.5-flash-8b',
+                    model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
                     systemInstruction: system,
                     contents: contents,
                     generationConfig: { maxOutputTokens: max_tokens, temperature: 0.7 }

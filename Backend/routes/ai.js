@@ -30,7 +30,8 @@ function stripJsonCodeFences(text) {
 }
 
 async function askGeminiJSON(prompt, { model } = {}) {
-    const chosenModel = model || process.env.GEMINI_MODEL_JSON || process.env.GEMINI_MODEL || 'gemini-1.5-flash-8b';
+    // Default to a model name that is available on the GenAI API v1 for generateContent.
+    const chosenModel = model || process.env.GEMINI_MODEL_JSON || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
     try {
         const response = await ai.models.generateContent({
             model: chosenModel,
@@ -285,7 +286,7 @@ router.post('/recommend', async (req, res) => {
             }).filter(Boolean).join('\n');
 
             try {
-                const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-8b";
+                const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
                 const response = await ai.models.generateContent({
                     model: GEMINI_MODEL,
                     contents: [{ role: 'user', parts: [{ text: `User history:\n${recentHistoryText}\nBased on this, what 3-5 words describe what they might want to buy next? Return ONLY the search string.` }] }]
@@ -313,7 +314,7 @@ router.post('/recommend', async (req, res) => {
         let recommendedItems = [];
         try {
             const finalPrompt = `You are an expert e-commerce assistant. Here are the Top 5 absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
-            const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash-8b";
+            const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
             const response = await ai.models.generateContent({
                 model: GEMINI_MODEL,
                 contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
