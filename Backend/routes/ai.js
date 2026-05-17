@@ -351,7 +351,7 @@ function fixImageUrl(product) {
 // POST /ai/visual-search
 // Body: { device_id, vision_labels: [{label, confidence}], top_label, base64_image? }
 router.post('/visual-search', async (req, res) => {
-    const { device_id, vision_labels, top_label, base64_image } = req.body;
+    const { device_id, vision_labels, top_label, base64_image, mode } = req.body;
     if (!device_id || !Array.isArray(vision_labels) || vision_labels.length === 0) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -361,7 +361,7 @@ router.post('/visual-search', async (req, res) => {
         const top5 = labelStrings.slice(0, 5);
 
         // ── Step 1: Build text query string from Vision labels ────────────────
-        const queryString = vision_labels
+        let queryString = vision_labels
             .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
             .slice(0, 10)
             .map(v => (v.label || v).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').trim())
@@ -390,13 +390,40 @@ router.post('/visual-search', async (req, res) => {
                 return { results: data || [], type: 'image' };
             })(),
 
-            // B) Text hybrid search (fallback when no image)
+            // B) Text hybrid search (fallback when no image or aesthetic mode)
             (async () => {
-                const embedding = await getLocalEmbedding(queryString);
+                let hybridQuery = queryString;
+                if (mode === 'aesthetic' && base64_image) {
+                    try {
+                        const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+                        const response = await ai.models.generateContent({
+                            model: GEMINI_MODEL,
+                            contents: [{
+                                role: 'user',
+                                parts: [
+                                    { inlineData: { data: base64_image, mimeType: 'image/jpeg' } },
+                                    { text: 'Analyze this scene and extract its dominant colors and overall aesthetic. First, list the 1 or 2 most dominant colors (e.g. red, white, blue). Then list the style (e.g. rustic, modern). Return ONLY a comma-separated list of keywords. Do not describe objects.' }
+                                ]
+                            }],
+                            generationConfig: { temperature: 0.2 }
+                        });
+                        const aestheticKeywords = response.text().trim();
+                        if (aestheticKeywords) {
+                            hybridQuery = aestheticKeywords.replace(/,/g, ' ');
+                            // Add some keywords to labelStrings for tag overlap
+                            const newTags = hybridQuery.split(' ').filter(w => w.length > 3);
+                            labelStrings.push(...newTags);
+                        }
+                    } catch (aiErr) {
+                        console.error('Gemini aesthetic extraction failed:', aiErr.message);
+                    }
+                }
+
+                const embedding = await getLocalEmbedding(hybridQuery);
                 const { data, error } = await supabase.rpc('hybrid_search', {
-                    query_text: queryString,
+                    query_text: hybridQuery,
                     query_embedding: embedding,
-                    match_count: 20
+                    match_count: 30
                 });
                 if (error) throw error;
                 return { results: data || [], type: 'text' };
@@ -486,6 +513,9 @@ router.post('/visual-search', async (req, res) => {
             .map(vl => (vl.label || vl).replace(/_/g, ' ').replace(/\.n\.\d+/g, '').toLowerCase().trim())
             .filter(Boolean);
 
+        const colorKeywords = new Set(['red', 'blue', 'green', 'white', 'black', 'yellow', 'orange', 'purple', 'pink', 'beige', 'gray', 'grey', 'brown', 'silver', 'gold', 'teal', 'navy', 'cream']);
+        const extractedColors = labelStrings.filter(l => colorKeywords.has(l));
+
         const scored = merged.map(product => {
             const name        = (product.name || '').toLowerCase();
             const category    = (product.category || '').toLowerCase();
@@ -519,22 +549,57 @@ router.post('/visual-search', async (req, res) => {
 
             // ③ TAG OVERLAP BONUS
             const tagBonus = tagMatchIds.has(product.id) ? 0.2 : 0;
+            
+            // ④ COLOR OVERLAP SCORE
+            let colorScore = 0;
+            if (extractedColors.length > 0) {
+                let matches = 0;
+                extractedColors.forEach(c => {
+                    if (haystack.includes(c)) matches += 1;
+                });
+                colorScore = matches / extractedColors.length; // Normalized 0 to 1
+            }
 
             let combined;
             if (hasImageSearch) {
-                // CLIP image search ran → image similarity is king
-                // 65% image similarity | 15% label match | 10% tag bonus | 10% text hybrid
-                combined = (product._image_score  * 0.65)
-                         + (normLabel             * 0.15)
-                         + (tagBonus              * 0.10)
-                         + (product._hybrid_score * 0.10);
+                if (mode === 'aesthetic') {
+                    // For aesthetic, color matching is the top priority!
+                    if (extractedColors.length > 0) {
+                        combined = (colorScore            * 0.45)
+                                 + (product._image_score  * 0.25)
+                                 + (product._hybrid_score * 0.20)
+                                 + (tagBonus              * 0.10);
+                    } else {
+                        combined = (product._hybrid_score * 0.40)
+                                 + (product._image_score  * 0.40)
+                                 + (tagBonus              * 0.15)
+                                 + (normLabel             * 0.05);
+                    }
+                } else {
+                    combined = (product._image_score  * 0.65)
+                             + (normLabel             * 0.15)
+                             + (tagBonus              * 0.10)
+                             + (product._hybrid_score * 0.10);
+                }
             } else {
-                // No image sent → fall back to label-first text ranking
-                // 55% primary label | 20% label coverage | 15% text hybrid | 10% tag bonus
-                combined = (primaryScore           * 0.55)
-                         + (normLabel              * 0.20)
-                         + (product._hybrid_score  * 0.15)
-                         + (tagBonus               * 0.10);
+                if (mode === 'aesthetic') {
+                    if (extractedColors.length > 0) {
+                        combined = (colorScore             * 0.50)
+                                 + (product._hybrid_score  * 0.30)
+                                 + (normLabel              * 0.10)
+                                 + (tagBonus               * 0.10);
+                    } else {
+                        combined = (product._hybrid_score  * 0.50)
+                                 + (normLabel              * 0.25)
+                                 + (tagBonus               * 0.15)
+                                 + (primaryScore           * 0.10);
+                    }
+                } else {
+                    combined = (primaryScore           * 0.55)
+                             + (normLabel              * 0.20)
+                             + (product._hybrid_score  * 0.15)
+                             + (tagBonus               * 0.10);
+                }
             }
 
             return { ...product, _score: combined };
@@ -545,7 +610,27 @@ router.post('/visual-search', async (req, res) => {
             if (Math.abs(b._score - a._score) > 0.02) return b._score - a._score;
             return (tagMatchIds.has(b.id) ? 1 : 0) - (tagMatchIds.has(a.id) ? 1 : 0);
         });
-        let final = scored.slice(0, 8);
+        
+        let final = scored.slice(0, 15);
+        
+        if (mode === 'aesthetic') {
+            // Shuffle slightly to give variety instead of showing all variations of the same plate
+            // Or sort by category to show utensils, plates, etc.
+            const seenCategories = new Set();
+            const diverseFinal = [];
+            const remainder = [];
+            for (const p of final) {
+                if (!seenCategories.has(p.category)) {
+                    seenCategories.add(p.category);
+                    diverseFinal.push(p);
+                } else {
+                    remainder.push(p);
+                }
+            }
+            final = [...diverseFinal, ...remainder].slice(0, 8);
+        } else {
+            final = final.slice(0, 8);
+        }
 
 
         // ── Step 5: Fallback — always return 8 products ───────────────────────

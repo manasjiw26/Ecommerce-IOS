@@ -6,7 +6,13 @@ import CoreImage
 @MainActor
 class VisualSearchViewModel: ObservableObject {
 
+    enum SearchMode: String {
+        case object
+        case aesthetic
+    }
+
     // MARK: - Published State
+    @Published var searchMode: SearchMode = .object
     @Published var isLoading: Bool = false
     @Published var capturedImage: UIImage? = nil
     @Published var visionLabels: [(label: String, confidence: Float)] = []
@@ -49,7 +55,8 @@ class VisualSearchViewModel: ObservableObject {
                     deviceId: self.deviceId,
                     visionLabels: labels,
                     topLabel: topLabel,
-                    image: image          // ← sends base64 for CLIP matching
+                    image: image,         // ← sends base64 for CLIP matching
+                    mode: self.searchMode.rawValue
                 )
                 await MainActor.run {
                     self.visionLabels = labels

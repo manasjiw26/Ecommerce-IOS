@@ -12,6 +12,7 @@ struct ProductListView: View {
     
     @State private var showProfile = false
     @State private var showFilters = false
+    @State private var showSourceTypeDialog = false
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     
     var categories: [String] {
@@ -276,6 +277,17 @@ struct ProductListView: View {
                 SearchFilterSheet(viewModel: searchViewModel)
             }
             .confirmationDialog("Visual Search", isPresented: $visualVM.showSourceDialog, titleVisibility: .visible) {
+                Button("Search Object") { 
+                    visualVM.searchMode = .object
+                    showSourceTypeDialog = true 
+                }
+                Button("Search Aesthetic") { 
+                    visualVM.searchMode = .aesthetic
+                    showSourceTypeDialog = true 
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .confirmationDialog("Choose Image Source", isPresented: $showSourceTypeDialog, titleVisibility: .visible) {
                 Button("Camera") { visualVM.showCamera = true }
                 Button("Photo Library") { visualVM.showPhotoLibrary = true }
                 Button("Cancel", role: .cancel) {}
