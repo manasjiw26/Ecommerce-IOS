@@ -304,6 +304,13 @@ struct CartItemRow: View {
     @EnvironmentObject var cartManager: CartManager
 
     var isOutOfStock: Bool { availableStock < item.quantity }
+    var canIncrement: Bool {
+        // If stock is unknown (we use a high fallback), allow.
+        // If stock is known, cap at availableStock.
+        if availableStock >= 999 { return true }
+        if availableStock == 0 { return false }
+        return item.quantity < availableStock
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -355,6 +362,7 @@ struct CartItemRow: View {
                     Image(systemName: "minus.circle.fill")
                         .foregroundColor(.secondary)
                 }
+                .frame(width: 32, height: 32)
 
                 Text("\(item.quantity)")
                     .font(.subheadline)
@@ -362,11 +370,15 @@ struct CartItemRow: View {
                     .foregroundColor(isOutOfStock ? .red : .primary)
                     .frame(minWidth: 18)
 
-                Button(action: { cartManager.addToCart(product: item.product) }) {
+                Button(action: {
+                    guard canIncrement else { return }
+                    cartManager.addToCart(product: item.product)
+                }) {
                     Image(systemName: "plus.circle.fill")
-                        .foregroundColor(availableStock <= item.quantity ? .secondary : .primary)
+                        .foregroundColor(canIncrement ? .primary : .secondary)
                 }
-                .disabled(availableStock <= item.quantity)
+                .frame(width: 32, height: 32)
+                .disabled(!canIncrement)
             }
         }
     }
@@ -380,4 +392,3 @@ struct CartView_Previews: PreviewProvider {
         }
     }
 }
-
