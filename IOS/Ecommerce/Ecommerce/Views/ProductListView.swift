@@ -504,36 +504,50 @@ struct ProductListView: View {
                     VStack(alignment: .leading, spacing: 0) {
 
                         // MARK: — Search Pill (tapping activates inline search)
-                        Button {
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                                isSearchActive = true
+                        HStack(spacing: 0) {
+                            // Text area — tap to open text search
+                            Button {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                                    isSearchActive = true
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    searchFocused = true
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundColor(Color(.placeholderText))
+
+                                    Text("Search")
+                                        .font(.system(size: 17))
+                                        .foregroundColor(Color(.placeholderText))
+
+                                    Spacer()
+                                }
+                                .padding(.leading, 14)
+                                .padding(.trailing, 6)
+                                .padding(.vertical, 11)
+                                .contentShape(Rectangle())
                             }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                searchFocused = true
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(Color(.placeholderText))
+                            .buttonStyle(PlainButtonStyle())
 
-                                Text("Search")
-                                    .font(.system(size: 17))
-                                    .foregroundColor(Color(.placeholderText))
-
-                                Spacer()
-
+                            // Camera — tap to open visual search
+                            Button {
+                                visualVM.showSourceDialog = true
+                            } label: {
                                 Image(systemName: "camera")
                                     .font(.system(size: 15))
                                     .foregroundColor(Color(.placeholderText))
+                                    .frame(width: 40, height: 44)
+                                    .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 11)
-                            .background(Color(UIColor.systemBackground))
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
+                            .buttonStyle(ScaleButtonStyle())
+                            .padding(.trailing, 6)
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .background(Color(UIColor.systemBackground))
+                        .clipShape(Capsule())
+                        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
