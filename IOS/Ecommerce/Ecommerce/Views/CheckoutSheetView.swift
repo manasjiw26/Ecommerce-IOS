@@ -7,6 +7,9 @@ struct CheckoutSheetView: View {
     let checkoutItems: [CartItem]
     let addOnTotal: Double
 
+    @StateObject private var addressBook = AddressBookViewModel()
+    @State private var editingAddress: Address? = nil
+
     @State private var shippingSpeed: ShippingSpeed = .standard
     @State private var paymentMethod: PaymentMethod = .mockPay
 
@@ -14,6 +17,7 @@ struct CheckoutSheetView: View {
     @State private var email: String = AuthSession.shared.currentUser?.email ?? ""
     @State private var phone: String = ""
     @State private var address1: String = ""
+    @State private var address2: String = ""
     @State private var city: String = ""
     @State private var state: String = ""
     @State private var zip: String = ""
@@ -108,6 +112,22 @@ struct CheckoutSheetView: View {
                 }
             )
         }
+        .sheet(item: $editingAddress) { addr in
+            AddressEditSheet(
+                address: addr,
+                onSave: { saved in
+                    addressBook.upsert(saved)
+                    addressBook.select(saved.id)
+                    applySelectedAddress()
+                    editingAddress = nil
+                },
+                onCancel: { editingAddress = nil }
+            )
+            .presentationDetents([.large])
+        }
+        .onAppear {
+            applySelectedAddress()
+        }
     }
 
     private var reviewSection: some View {
@@ -161,6 +181,65 @@ struct CheckoutSheetView: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
 
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Saved addresses")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button {
+                        editingAddress = Address(label: "Home", fullName: fullName, phone: phone, line1: "", line2: "", city: "", state: "", zip: "")
+                    } label: {
+                        Text("Add new")
+                            .font(.footnote)
+                            .fontWeight(.semibold)
+                    }
+                }
+
+                ForEach(addressBook.addresses) { addr in
+                    Button {
+                        addressBook.select(addr.id)
+                        applySelectedAddress()
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: addressBook.selectedAddressId == addr.id ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(addressBook.selectedAddressId == addr.id ? .accentColor : .secondary)
+                                .padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(addr.label)
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    Text("• \(addr.fullName)")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                Text(addr.oneLine)
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                                if !addr.phone.isEmpty {
+                                    Text(addr.phone)
+                                        .font(.footnote)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                editingAddress = addr
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Color(.tertiarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
             VStack(spacing: 10) {
                 TextField("Full name", text: $fullName)
                     .textContentType(.name)
@@ -174,6 +253,8 @@ struct CheckoutSheetView: View {
                     .textFieldStyle(.roundedBorder)
                 TextField("Address line 1", text: $address1)
                     .textContentType(.streetAddressLine1)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Address line 2 (optional)", text: $address2)
                     .textFieldStyle(.roundedBorder)
                 HStack(spacing: 10) {
                     TextField("City", text: $city).textFieldStyle(.roundedBorder)
@@ -282,6 +363,17 @@ struct CheckoutSheetView: View {
         !address1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !zip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func applySelectedAddress() {
+        guard let addr = addressBook.selectedAddress else { return }
+        if !addr.fullName.isEmpty { fullName = addr.fullName }
+        if !addr.phone.isEmpty { phone = addr.phone }
+        if !addr.line1.isEmpty { address1 = addr.line1 }
+        if !addr.line2.isEmpty { address2 = addr.line2 }
+        if !addr.city.isEmpty { city = addr.city }
+        if !addr.state.isEmpty { state = addr.state }
+        if !addr.zip.isEmpty { zip = addr.zip }
     }
 
     private func placeOrder(paymentId: String) async {
@@ -393,6 +485,53 @@ private struct RazorpayPaymentCaptureView: View {
                         dismiss()
                         onCancel()
                     }
+                }
+            }
+        }
+    }
+}
+
+private struct AddressEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State var address: Address
+    let onSave: (Address) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Label") {
+                    TextField("Home / Work", text: $address.label)
+                }
+                Section("Contact") {
+                    TextField("Full name", text: $address.fullName)
+                    TextField("Phone", text: $address.phone)
+                        .keyboardType(.phonePad)
+                }
+                Section("Address") {
+                    TextField("Line 1", text: $address.line1)
+                    TextField("Line 2", text: $address.line2)
+                    TextField("City", text: $address.city)
+                    TextField("State", text: $address.state)
+                    TextField("ZIP", text: $address.zip)
+                        .keyboardType(.numberPad)
+                }
+            }
+            .navigationTitle("Address")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                        onCancel()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        dismiss()
+                        onSave(address)
+                    }
+                    .fontWeight(.semibold)
                 }
             }
         }

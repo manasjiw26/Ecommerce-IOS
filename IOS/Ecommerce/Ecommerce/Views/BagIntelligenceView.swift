@@ -5,6 +5,8 @@ struct BagIntelligenceView: View {
     let resurface: ResurfaceResponse?
     let occasion: Occasion?
     let coachError: String?
+    let onOpenSaved: (() -> Void)?
+    let onOpenAddOns: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -27,6 +29,12 @@ struct BagIntelligenceView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 2)
+
+                if let onOpenSaved {
+                    Button("View saved items", action: onOpenSaved)
+                        .font(.footnote)
+                        .fontWeight(.semibold)
+                }
             }
 
             if let coach {
@@ -65,6 +73,12 @@ struct BagIntelligenceView: View {
                             Text("Add $\(String(format: "%.2f", next.remaining)) to unlock \(next.label).")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
+                        }
+
+                        if let onOpenAddOns {
+                            Button("Add recommended items", action: onOpenAddOns)
+                                .font(.footnote)
+                                .fontWeight(.semibold)
                         }
                     }
                 }

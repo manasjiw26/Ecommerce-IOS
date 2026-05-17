@@ -10,6 +10,7 @@ struct BagView: View {
 
     @State private var showSaved = false
     @State private var showCheckout = false
+    @State private var scrollToAddOnsTick: Int = 0
 
     @State private var undo: UndoState? = nil
 
@@ -33,6 +34,7 @@ struct BagView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         List {
             if cartManager.items.isEmpty {
                 Section {
@@ -56,7 +58,15 @@ struct BagView: View {
                         coach: bagVM.coach,
                         resurface: bagVM.resurface,
                         occasion: occasionVM.currentOccasion,
-                        coachError: bagVM.coachError
+                        coachError: bagVM.coachError,
+                        onOpenSaved: { showSaved = true },
+                        onOpenAddOns: {
+                            // Nudge the list to the add-ons section.
+                            scrollToAddOnsTick += 1
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                proxy.scrollTo("bag_addons_anchor", anchor: .top)
+                            }
+                        }
                     )
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -121,6 +131,9 @@ struct BagView: View {
                 }
 
                 Section("Complete Your Set") {
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bag_addons_anchor")
                     BagBundleStrip(
                         bundle: bagVM.coach == nil ? nil : nil, // coach doesn’t carry products; strip uses bundle endpoint below
                         products: bagVMBundleProducts,
@@ -136,6 +149,7 @@ struct BagView: View {
                         .listRowBackground(Color.clear)
                 }
             }
+        }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)

@@ -60,8 +60,21 @@ class CartManager: ObservableObject {
     private func fetchBackendCart(userId: String) async {
         do {
             let backendItems = try await APIService.shared.fetchCart(userId: userId)
-            self.items = backendItems.map { bItem in
-                CartItem(id: UUID(), backendId: bItem.id, product: bItem.products, quantity: bItem.quantity)
+            // Backend can occasionally return duplicate rows for the same product_id.
+            // Merge them so the UI always shows a single line item per product.
+            var byProduct: [Int: (backendId: Int?, product: Product, quantity: Int)] = [:]
+            for bItem in backendItems {
+                let pid = bItem.products.id
+                if var existing = byProduct[pid] {
+                    existing.quantity += bItem.quantity
+                    // keep the first backend id as the delete handle
+                    byProduct[pid] = existing
+                } else {
+                    byProduct[pid] = (backendId: bItem.id, product: bItem.products, quantity: bItem.quantity)
+                }
+            }
+            self.items = byProduct.values.map { merged in
+                CartItem(id: UUID(), backendId: merged.backendId, product: merged.product, quantity: merged.quantity)
             }
             saveCart()
         } catch {
@@ -154,8 +167,17 @@ class CartManager: ObservableObject {
     private func loadCart() {
         if let data = UserDefaults.standard.data(forKey: saveKey),
            let decoded = try? JSONDecoder().decode([CartItem].self, from: data) {
-            
-            items = decoded
+            // Merge any duplicates (same product) from local persistence.
+            var byProduct: [Int: CartItem] = [:]
+            for item in decoded {
+                if var existing = byProduct[item.product.id] {
+                    existing.quantity += item.quantity
+                    byProduct[item.product.id] = existing
+                } else {
+                    byProduct[item.product.id] = item
+                }
+            }
+            items = Array(byProduct.values)
         }
     }
 }
