@@ -17,7 +17,7 @@ function daysUntil(dateStr) {
 async function buildDashboard(registryId) {
     const { data: registry, error: regErr } = await supabase
         .from('registries')
-        .select('id, event_type, event_date, budget, share_token, theme')
+        .select('id, event_type, event_date, budget, share_token, theme, event_location, is_public, user_id')
         .eq('id', registryId)
         .single();
     if (regErr) throw regErr;
@@ -93,13 +93,185 @@ async function buildDashboard(registryId) {
     };
 }
 
+// GET /registry/starter-bundles
+router.get('/starter-bundles', async (req, res) => {
+    try {
+        const { event_type } = req.query;
+        // Fetch real products from catalog to construct bundles dynamically!
+        const { data: products, error } = await supabase.from('products').select('*');
+        if (error) return res.status(500).json({ error: error.message });
+
+        // Let's group products dynamically into gorgeous starter bundles
+        // depending on the event type!
+        const type = (event_type || '').toLowerCase();
+        let bundles = [];
+
+        if (type.includes('sangeet') || type.includes('diwali')) {
+            const platterProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('platter') || name.includes('spoon') || name.includes('bowl') || name.includes('serve') || name.includes('brass');
+            }).slice(0, 3);
+
+            const diningProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('plate') || name.includes('glass') || name.includes('cup') || name.includes('dining');
+            }).slice(0, 3);
+
+            bundles = [
+                {
+                    title: "Festive Host Starter",
+                    subtitle: platterProducts.length > 0 ? `Premium traditional platters including ${platterProducts[0].name}` : "Premium traditional platters & servers",
+                    imageUrl: platterProducts[0]?.image_url || "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Festive Host",
+                    productIds: platterProducts.map(p => p.id)
+                },
+                {
+                    title: "Royal Dining Essentials",
+                    subtitle: diningProducts.length > 0 ? `Elegant dinnerware featuring ${diningProducts[0].name}` : "Elegant brass & copper serving styles",
+                    imageUrl: diningProducts[0]?.image_url || "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Royal Dining",
+                    productIds: diningProducts.map(p => p.id)
+                }
+            ];
+        } else if (type.includes('wedding') || type.includes('engagement') || type.includes('gala')) {
+            const cookwareProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                const cat = (p.category || '').toLowerCase();
+                return name.includes('pan') || name.includes('pot') || name.includes('oven') || cat.includes('cook') || name.includes('staub');
+            }).slice(0, 3);
+
+            const glassProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('glass') || name.includes('wine') || name.includes('champagne') || name.includes('dorset');
+            }).slice(0, 3);
+
+            bundles = [
+                {
+                    title: "Grand Kitchen Starter",
+                    subtitle: cookwareProducts.length > 0 ? `Luxury cookware featuring ${cookwareProducts[0].name}` : "Luxury enameled cast iron & appliances",
+                    imageUrl: cookwareProducts[0]?.image_url || "https://images.unsplash.com/photo-1584269600464-37b1b58a9fe7?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Grand Kitchen",
+                    productIds: cookwareProducts.map(p => p.id)
+                },
+                {
+                    title: "Crystal Tabletop",
+                    subtitle: glassProducts.length > 0 ? `Schott Zwiesel glass sets with ${glassProducts[0].name}` : "Premium Schott Zwiesel glassware & wine styles",
+                    imageUrl: glassProducts[0]?.image_url || "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Crystal Tabletop",
+                    productIds: glassProducts.map(p => p.id)
+                }
+            ];
+        } else if (type.includes('housewarming')) {
+            const nestProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('mug') || name.includes('linen') || name.includes('wood') || name.includes('candle') || name.includes('apilco');
+            }).slice(0, 3);
+
+            const barProducts = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('bar') || name.includes('shaker') || name.includes('cocktail') || name.includes('corkscrew') || name.includes('martini');
+            }).slice(0, 3);
+
+            bundles = [
+                {
+                    title: "New Nest Essentials",
+                    subtitle: nestProducts.length > 0 ? `Cozy home items featuring ${nestProducts[0].name}` : "Cozy mugs, organic linens & woodware",
+                    imageUrl: nestProducts[0]?.image_url || "https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "New Nest",
+                    productIds: nestProducts.map(p => p.id)
+                },
+                {
+                    title: "Premium Barware",
+                    subtitle: barProducts.length > 0 ? `Elegant tools with ${barProducts[0].name}` : "Cocktail tools & marble serving boards",
+                    imageUrl: barProducts[0]?.image_url || "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Premium Barware",
+                    productIds: barProducts.map(p => p.id)
+                }
+            ];
+        } else {
+            // Default Fallback Bundles
+            const defaultProducts1 = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('martini') || name.includes('glass') || name.includes('shaker');
+            }).slice(0, 3);
+            
+            const defaultProducts2 = products.filter(p => {
+                const name = p.name.toLowerCase();
+                return name.includes('spoon') || name.includes('dutch') || name.includes('pan');
+            }).slice(0, 3);
+
+            bundles = [
+                {
+                    title: "Professional Mixology",
+                    subtitle: defaultProducts1.length > 0 ? `Luxury setup including ${defaultProducts1[0].name}` : "Barware tools, strainers & luxury glassware",
+                    imageUrl: defaultProducts1[0]?.image_url || "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Professional Mixology",
+                    productIds: defaultProducts1.map(p => p.id)
+                },
+                {
+                    title: "Gourmet Entertaining",
+                    subtitle: defaultProducts2.length > 0 ? `Premium boards with ${defaultProducts2[0].name}` : "Cheeseboards, marble platters & markers",
+                    imageUrl: defaultProducts2[0]?.image_url || "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=300&q=80",
+                    bundleType: "Gourmet Entertaining",
+                    productIds: defaultProducts2.map(p => p.id)
+                }
+            ];
+        }
+
+        return res.json(bundles);
+    } catch (e) {
+        console.error('[GET /registry/starter-bundles]:', e.message);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 // GET registries for a user
 router.get('/user/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
-        const { data, error } = await supabase.from('registries').select('*').eq('user_id', userId);
-        if (error) return res.status(500).json({ error: error.message, code: 500 });
-        return res.json(data || []);
+               // 1. Fetch registries where the user is the owner
+        const { data: owned, error: ownedErr } = await supabase
+            .from('registries')
+            .select('*')
+            .eq('user_id', userId);
+        if (ownedErr) return res.status(500).json({ error: ownedErr.message, code: 500 });
+
+        // 2. Fetch registries where the user is a collaborator (queried by their registered email)
+        let collabRegistries = [];
+        const { data: userRec, error: userErr } = await supabase
+            .from('users')
+            .select('email')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (!userErr && userRec && userRec.email) {
+            const { data: collabs, error: collabErr } = await supabase
+                .from('registry_collaborators')
+                .select('registry_id')
+                .eq('email', userRec.email);
+            
+            if (!collabErr && collabs && collabs.length > 0) {
+                const collabIds = collabs.map(c => c.registry_id);
+                const { data: shared, error: sharedErr } = await supabase
+                    .from('registries')
+                    .select('*')
+                    .in('id', collabIds);
+                if (!sharedErr && shared) {
+                    collabRegistries = shared;
+                }
+            }
+        }
+
+        // 3. Combine both lists (removing duplicates if any)
+        const combined = [...(owned || [])];
+        const ownedIds = new Set(combined.map(r => r.id));
+        for (const r of collabRegistries) {
+            if (!ownedIds.has(r.id)) {
+                combined.push(r);
+            }
+        }
+
+        return res.json(combined);
     } catch (e) {
         console.error('[GET /registry/user/:userId]:', e.message);
         return res.status(500).json({ error: e.message, code: 500 });
@@ -140,7 +312,7 @@ router.get('/:id', async (req, res) => {
 // POST create registry
 router.post('/', async (req, res) => {
     try {
-        const { user_id, event_type, event_date, event_location, is_public, address_pre_event, address_post_event } =
+        const { user_id, event_type, event_date, event_location, is_public, address_pre_event, address_post_event, theme, budget } =
             req.body;
 
         const { data, error } = await supabase
@@ -153,7 +325,9 @@ router.post('/', async (req, res) => {
                     event_location,
                     is_public,
                     address_pre_event,
-                    address_post_event
+                    address_post_event,
+                    theme,
+                    budget: budget || 0
                 }
             ])
             .select()
@@ -383,6 +557,26 @@ router.post('/:id/items', async (req, res) => {
             .single();
         if (prodErr) return res.status(500).json({ error: prodErr.message, code: 500 });
 
+        // Safe Check: If item already exists, update the quantity requested instead of crashing on unique constraint
+        const { data: existing, error: exErr } = await supabase
+            .from('registry_items')
+            .select('*')
+            .eq('registry_id', id)
+            .eq('product_id', product_id)
+            .maybeSingle();
+
+        if (existing) {
+            const newQty = Number(existing.quantity_requested || 1) + Number(quantity_requested || 1);
+            const { data: updated, error: updErr } = await supabase
+                .from('registry_items')
+                .update({ quantity_requested: newQty })
+                .eq('id', existing.id)
+                .select()
+                .single();
+            if (updErr) return res.status(500).json({ error: updErr.message, code: 500 });
+            return res.json(updated);
+        }
+
         const { data, error } = await supabase
             .from('registry_items')
             .insert([
@@ -390,7 +584,7 @@ router.post('/:id/items', async (req, res) => {
                     registry_id: id,
                     product_id,
                     quantity_requested,
-                    is_most_wanted,
+                    is_most_wanted: is_most_wanted || false,
                     price_snapshot: Number(product?.price || 0),
                     ai_reason: ai_reason || null
                 }
@@ -409,8 +603,17 @@ router.post('/:id/items', async (req, res) => {
 // PUT update item (e.g. quantity received, or most wanted)
 router.put('/:id/items/:itemId', async (req, res) => {
     try {
-        const { itemId } = req.params;
+        const { id, itemId } = req.params;
         const updates = req.body;
+
+        if (updates.is_most_wanted === true) {
+            // Enforce only ONE most wanted item in this registry
+            await supabase
+                .from('registry_items')
+                .update({ is_most_wanted: false })
+                .eq('registry_id', id)
+                .neq('id', itemId);
+        }
 
         const { data, error } = await supabase.from('registry_items').update(updates).eq('id', itemId).select().single();
 
@@ -432,6 +635,38 @@ router.delete('/:id/items/:itemId', async (req, res) => {
         return res.json({ success: true });
     } catch (e) {
         console.error('[DELETE /registry/:id/items/:itemId]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
+    }
+});
+
+// PUT update registry
+router.put('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updates = req.body;
+        const { data, error } = await supabase
+            .from('registries')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json(data);
+    } catch (e) {
+        console.error('[PUT /registry/:id]:', e.message);
+        return res.status(500).json({ error: e.message, code: 500 });
+    }
+});
+
+// DELETE registry
+router.delete('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { error } = await supabase.from('registries').delete().eq('id', id);
+        if (error) return res.status(500).json({ error: error.message, code: 500 });
+        return res.json({ success: true });
+    } catch (e) {
+        console.error('[DELETE /registry/:id]:', e.message);
         return res.status(500).json({ error: e.message, code: 500 });
     }
 });
