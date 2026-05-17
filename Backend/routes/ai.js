@@ -300,7 +300,7 @@ router.post('/recommend', async (req, res) => {
         let recentHistoryText = "";
 
         if (!events || events.length === 0) {
-            const { data: popular } = await supabase.from('products').select('*').order('stock', { ascending: false }).limit(20);
+            const { data: popular } = await supabase.from('products').select('*').gt('stock', 0).order('stock', { ascending: false }).limit(25);
             candidates = popular || [];
         } else {
             const productIds = events.map(e => e.product_id);
@@ -324,22 +324,45 @@ router.post('/recommend', async (req, res) => {
                 const { data: searchResults } = await supabase.rpc('hybrid_search', {
                     query_text: searchIntent,
                     query_embedding: queryEmbedding,
-                    match_count: 5
+                    match_count: 25
                 });
                 candidates = searchResults || [];
             } catch (aiError) {
                 console.error("AI Intent Generation Failed:", aiError.message);
                 const categories = [...new Set(historyProducts.map(p => p.category))];
-                const { data: fallbackCandidates } = await supabase.from('products').select('*').in('category', categories).limit(5);
+                const { data: fallbackCandidates } = await supabase.from('products').select('*').in('category', categories).limit(25);
                 candidates = fallbackCandidates || [];
             }
         }
 
+        // Filter out out-of-stock items
+        candidates = candidates.filter(c => c.stock !== 0);
+
+        // Guarantee at least 25 premium items by appending popular fallbacks if list is short
+        if (candidates.length < 25) {
+            const existingIds = candidates.map(c => c.id);
+            const { data: extraPopular } = await supabase.from('products')
+                .select('*')
+                .not('id', 'in', `(${existingIds.join(',') || 0})`)
+                .gt('stock', 0)
+                .order('stock', { ascending: false })
+                .limit(25 - candidates.length);
+            if (extraPopular) {
+                candidates = [...candidates, ...extraPopular];
+            }
+        }
+
+        // Double check filtering to ensure 100% in-stock integrity
+        candidates = candidates.filter(c => c.stock !== 0);
+
         if (candidates.length === 0) return res.json([]);
 
+        // Get custom AI reasoning pitches for the top 12 items, and fallback for the rest
+        const count = Math.min(candidates.length, 12);
+        const candidatesToRank = candidates.slice(0, count);
         let recommendedItems = [];
         try {
-            const finalPrompt = `You are an expert e-commerce assistant. Here are the Top 5 absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidates.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
+            const finalPrompt = `You are an expert e-commerce assistant. Here are the Top ${count} absolute best-matching products for the user based on our internal search engine:\n${JSON.stringify(candidatesToRank.map(c => ({id: c.id, name: c.name, category: c.category, tags: c.tags})))}\n\nYour ONLY job is to write a short 1-sentence reasoning pitch for why they would love each product. Do NOT filter or remove any products. Return ONLY a valid JSON array of objects with "id" (number) and "reasoning" (string).`;
             const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
             const response = await ai.models.generateContent({
                 model: GEMINI_MODEL,
@@ -349,14 +372,14 @@ router.post('/recommend', async (req, res) => {
             recommendedItems = JSON.parse(response.text());
         } catch(e) {
             console.error("Gemini Re-ranking Failed:", e.message);
-            recommendedItems = candidates.slice(0, 5).map(c => ({ id: c.id }));
+            recommendedItems = candidatesToRank.map(c => ({ id: c.id, reasoning: "A premium addition to your collection." }));
         }
 
-        const fullRecommendations = recommendedItems.map(item => {
-            const productDetails = candidates.find(p => p.id === item.id);
-            if (!productDetails) return null;
-            return { ...productDetails, ai_reasoning: item.reasoning };
-        }).filter(Boolean);
+        const fullRecommendations = candidates.map(productDetails => {
+            const item = recommendedItems.find(p => p.id === productDetails.id);
+            const reasoning = item?.reasoning || "A handpicked premium recommendation for your collection.";
+            return { ...productDetails, ai_reasoning: reasoning };
+        });
 
         res.json(fullRecommendations);
 
@@ -1004,6 +1027,25 @@ router.post('/cart-coach', async (req, res) => {
         const { cart_items } = req.body || {};
         if (!Array.isArray(cart_items)) return res.status(400).json({ error: 'cart_items array required' });
 
+        // Compute a few deterministic commerce metrics for the client UI.
+        const subtotal = (cart_items || []).reduce((sum, it) => {
+            const price = Number(it.price || 0);
+            const qty = Number(it.quantity || 1) || 1;
+            return sum + price * qty;
+        }, 0);
+
+        // Simple AOV tiers (used by BagIntelligenceView progress UI).
+        const tiers = [
+            { label: 'Free Shipping', threshold: 200 },
+            { label: 'Free Express Upgrade', threshold: 300 },
+            { label: 'VIP Perks', threshold: 500 },
+        ];
+        const nextTier = tiers.find(t => subtotal < t.threshold) || null;
+        const nextTierRemaining = nextTier ? Math.max(0, nextTier.threshold - subtotal) : 0;
+        const tierProgressPct = nextTier
+            ? Math.max(0, Math.min(100, Math.round((subtotal / nextTier.threshold) * 100)))
+            : 100;
+
         const prompt = `
 You are a premium home & kitchen shopping coach analyzing a customer's cart.
 Cart contents: ${JSON.stringify(cart_items)}
@@ -1020,7 +1062,15 @@ Return ONLY valid JSON:
                 top_suggestion: 'Add a best-selling utensil set to round out your cart.'
             };
         }
-        return res.json(analysis);
+        const bannerInsight = (analysis.insights && analysis.insights[0] && analysis.insights[0].message) ? analysis.insights[0].message : analysis.top_suggestion;
+
+        return res.json({
+            ...analysis,
+            subtotal,
+            progress_percentage: tierProgressPct,
+            next_tier: nextTier ? { label: nextTier.label, threshold: nextTier.threshold, remaining: nextTierRemaining } : null,
+            banner_insight: bannerInsight,
+        });
     } catch (e) {
         return res.status(500).json({ error: e.message });
     }
@@ -1276,32 +1326,174 @@ router.post('/occasion-detect', async (req, res) => {
         const items = normalizeCartItems(cart_items);
         if (!items.length) return res.status(400).json({ error: 'cart_items array required' });
 
-        // Heuristic first (fast + works offline)
+        // Heuristic first (fast + works offline) - ordered from most specific to most general
         const text = items.map((i) => `${i.name} ${i.category || ''} ${(i.tags || []).join(' ')}`).join(' ').toLowerCase();
         let label = 'unknown';
-        if (/(wine|glass|martini|platter|serveware|hosting|bar)/.test(text)) label = 'hosting';
-        else if (/(candle|decor|vase|scent|pillow|blanket|sanctuary)/.test(text)) label = 'home_sanctuary';
-        else if (/(pan|pot|skillet|knife|chef|cookware|bakeware|oven|culinary)/.test(text)) label = 'culinary';
+        
+        if (/(coffee|espresso|brew|barista|dripper)/.test(text)) {
+            label = 'coffee';
+        }
+        else if (/(bake|pastry|dough|bread|stoneware)/.test(text)) {
+            label = 'baking';
+        }
+        else if (/(brunch|pancake|waffle|syrup|breakfast)/.test(text)) {
+            label = 'brunch';
+        }
+        else if (/(romantic|candlelight|champagne|intimate)/.test(text)) {
+            label = 'romantic';
+        }
+        else if (/(holiday|christmas|thanksgiving|roaster|brass)/.test(text)) {
+            label = 'holiday';
+        }
+        else if (/(outdoor|garden|patio|melamine|grill)/.test(text)) {
+            label = 'outdoor';
+        }
+        else if (/(candle|decor|vase|scent|pillow|blanket|sanctuary)/.test(text)) {
+            label = 'home_sanctuary';
+        }
+        else if (/(wine_tasting|charcuterie|cheese)/.test(text)) {
+            label = 'wine_tasting';
+        }
+        else if (/(wine|glass|martini|platter|serveware|hosting|bar)/.test(text)) {
+            // Check for cheese boards or knives inside hosting trigger to refine into wine_tasting
+            if (/(cheese|board|charcuterie|knife)/.test(text)) {
+                label = 'wine_tasting';
+            } else {
+                label = 'hosting';
+            }
+        }
+        else if (/(pan|pot|skillet|knife|chef|cookware|bakeware|oven|culinary)/.test(text)) {
+            label = 'culinary';
+        }
 
         // If Gemini is available, refine into a richer response (but keep the heuristic label as fallback)
         let ai = null;
         if (process.env.GEMINI_API_KEY) {
             const prompt = `
-You are an e-commerce intent classifier for a premium home & kitchen store.
-Given cart items, classify the shopping occasion.
-Return ONLY valid JSON: {"label":"hosting|home_sanctuary|culinary|wedding|housewarming|holiday|unknown","confidence":0.0,"reason":"one sentence","recommended_tags":["..."],"suggested_next_actions":["..."]}.
+You are an e-commerce classification assistant for a premium kitchen/home cookware store.
+Given cart items, classify the shopping occasion into one of these: hosting, home_sanctuary, culinary, baking, coffee, brunch, wine_tasting, outdoor, romantic, holiday, or unknown.
+Return ONLY valid JSON: {"label":"hosting|home_sanctuary|culinary|baking|coffee|brunch|wine_tasting|outdoor|romantic|holiday|unknown","confidence":0.0,"reason":"one sentence","recommended_tags":["..."],"suggested_next_actions":["..."]}.
 Cart items: ${JSON.stringify(items.map(i => ({ name: i.name, category: i.category, tags: i.tags, price: i.price, quantity: i.quantity })))}
 `;
             ai = await askGeminiJSON(prompt);
         }
 
+        let finalLabel = ai?.label || label;
+        if (finalLabel === 'unknown' || !finalLabel) {
+            finalLabel = 'culinary';
+        }
+
         const out = {
-            label: ai?.label || label,
-            confidence: typeof ai?.confidence === 'number' ? ai.confidence : (label === 'unknown' ? 0.4 : 0.75),
+            label: finalLabel,
+            confidence: 0.75,
             reason: ai?.reason || 'Derived from cart contents.',
-            recommended_tags: ai?.recommended_tags || (label === 'unknown' ? [] : [label]),
+            recommended_tags: ai?.recommended_tags || [finalLabel],
             suggested_next_actions: ai?.suggested_next_actions || [],
         };
+
+        // Static defaults for 10 premium occasions
+        const defaults = {
+            culinary: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Culinary Masterclass',
+                description: 'Unlock gourmet cooking tools.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            hosting: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Hosting Dinner',
+                description: 'Set a stunning dinner stage.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            home_sanctuary: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Home Sanctuary',
+                description: 'Set a peaceful sanctuary mood.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            baking: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Artisanal Baking',
+                description: 'Bake artisan pastries & golden crusts.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            coffee: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Morning Coffee Ritual',
+                description: 'Sip luxury coffee brewing gear.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            brunch: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Sunday Brunch',
+                description: 'Elevate your premium Sunday spreads.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            wine_tasting: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Wine & Charcuterie',
+                description: 'Artisanal board & stemware spreads.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            outdoor: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Garden Gathering',
+                description: 'Premium al fresco dining sets.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            romantic: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Intimate Dinner',
+                description: 'Intimate fine dining for two.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            },
+            holiday: {
+                title: 'YOU MIGHT BE PLANNING',
+                subtitle: 'Holiday Feast',
+                description: 'Grand roasters & festive tablescapes.',
+                background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+            }
+        };
+
+        const matchedDefault = defaults[finalLabel] || {
+            title: 'YOU MIGHT BE PLANNING',
+            subtitle: 'Special Event',
+            description: 'Curated additions perfect for your items.',
+            background_image_url: 'https://res.cloudinary.com/dl7sh9osm/image/upload/q_auto/f_auto/v1779008584/Gemini_Generated_Image_8vdf6r8vdf6r8vdf.png'
+        };
+
+        out.title = matchedDefault.title;
+        out.subtitle = matchedDefault.subtitle;
+        out.description = matchedDefault.description;
+        out.background_image_url = matchedDefault.background_image_url;
+        out.is_local_asset = false;
+
+        // Best effort: Query custom user Supabase "occasions" table if they created one
+        try {
+            const { data: dbData } = await supabase
+                .from('occasions')
+                .select('*')
+                .eq('tag', finalLabel)
+                .maybeSingle();
+
+            if (dbData) {
+                if (dbData.title) out.title = dbData.title;
+                if (dbData.subtitle) out.subtitle = dbData.subtitle;
+                if (dbData.description) out.description = dbData.description;
+                if (dbData.background_image_url) {
+                    out.background_image_url = dbData.background_image_url;
+                    out.is_local_asset = false; // loaded from cloudflare/remote url
+                }
+            }
+        } catch (_) {}
+
+        // Sanitize default or legacy titles to 'YOU MIGHT BE PLANNING' as requested by the user
+        if (out.title === 'SMART OCCASION' || out.title === 'Smart Occasion' || out.title === 'OCCASION DETECTED' || !out.title) {
+            out.title = 'YOU MIGHT BE PLANNING';
+        }
+
+        // Back-compat for clients/tests expecting `occasion`
+        out.occasion = out.label;
 
         // Best-effort log: store parsed_intent + result_count in recent_searches if available
         if (device_id) {
@@ -1407,12 +1599,40 @@ Products: ${JSON.stringify((products || []).map(p => ({ id: p.id, name: p.name, 
 });
 
 // POST /ai/bundle-build
-// Body: { cart_items: [...] } OR { product_ids: [...] }
+// Body: { theme, budget } OR { cart_items: [...] } OR { product_ids: [...] }
 router.post('/bundle-build', async (req, res) => {
     try {
-        const { cart_items, product_ids, device_id } = req.body || {};
+        const { cart_items, product_ids, device_id, theme, budget } = req.body || {};
         const items = normalizeCartItems(cart_items);
         const ids = Array.isArray(product_ids) ? product_ids.filter(Boolean) : [];
+
+        // Theme-based bundle (used by docs + demo flows)
+        const themeStr = typeof theme === 'string' ? theme.trim() : '';
+        if (themeStr) {
+            const maxBudget = budget == null ? null : Number(budget);
+            const suggestions = await pipelineSearch(themeStr, device_id, 50);
+            const products = (suggestions || []).filter(Boolean);
+
+            // Pick items until we hit budget (best-effort)
+            const picked = [];
+            let total = 0;
+            for (const p of products) {
+                const price = Number(p.price || 0);
+                if (!price) continue;
+                if (maxBudget != null && maxBudget > 0 && total + price > maxBudget) continue;
+                picked.push(p);
+                total += price;
+                if (picked.length >= 8) break;
+            }
+
+            return res.json({
+                bundle_name: themeStr,
+                theme: themeStr,
+                budget: maxBudget,
+                total_price: total,
+                products: picked,
+            });
+        }
 
         let seedProducts = [];
         if (items.length) {
@@ -1459,21 +1679,39 @@ router.post('/chat-session', async (req, res) => {
         if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ error: 'messages required' });
 
         const sid = session_id || safeUuid();
-        if (!process.env.GEMINI_API_KEY) return res.status(501).json({ error: 'GEMINI_API_KEY not set for chat-session' });
+        const userLast = String(messages[messages.length - 1]?.content || '').trim();
 
-        const contents = messages.map((m) => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: String(m.content || '') }]
-        }));
+        let assistantText = '';
 
-        const response = await ai.models.generateContent({
-            model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
-            systemInstruction: system || 'You are a helpful shopping assistant.',
-            contents,
-            generationConfig: { maxOutputTokens: Number(max_tokens || 800), temperature: 0.7 }
-        });
+        // Prefer Gemini when available, but fall back to a deterministic local response if quotas are hit.
+        if (process.env.GEMINI_API_KEY) {
+            try {
+                const contents = messages.map((m) => ({
+                    role: m.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: String(m.content || '') }]
+                }));
 
-        const assistantText = response.text();
+                const response = await ai.models.generateContent({
+                    model: process.env.GEMINI_CHAT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+                    systemInstruction: system || 'You are a helpful shopping assistant.',
+                    contents,
+                    generationConfig: { maxOutputTokens: Number(max_tokens || 800), temperature: 0.7 }
+                });
+                assistantText = response.text();
+            } catch (_) {
+                assistantText = '';
+            }
+        }
+
+        if (!assistantText) {
+            const query = userLast || 'kitchen essentials';
+            const suggestions = await pipelineSearch(query, device_id, 8);
+            const top = (suggestions || []).slice(0, 5);
+            assistantText =
+                `Here are a few strong picks based on "${query}": ` +
+                top.map((p) => `${p.name} ($${Number(p.price || 0).toFixed(2)})`).join(', ') +
+                `.`;
+        }
 
         // Persist (best-effort)
         try {
@@ -1486,7 +1724,8 @@ router.post('/chat-session', async (req, res) => {
             }]);
         } catch (_) {}
 
-        return res.json({ session_id: sid, content: [{ text: assistantText }] });
+        // `reply` is kept for back-compat with earlier iOS builds.
+        return res.json({ session_id: sid, reply: assistantText, content: [{ text: assistantText }] });
     } catch (e) {
         if (missingTable(e)) return res.status(501).json({ error: 'Missing ai_conversation_history table. Ensure migrations ran.' });
         return res.status(500).json({ error: e.message });

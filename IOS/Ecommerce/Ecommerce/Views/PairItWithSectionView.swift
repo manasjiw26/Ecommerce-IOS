@@ -8,16 +8,18 @@ struct PairItWithSectionView: View {
             // Section Header
             VStack(alignment: .leading, spacing: 4) {
                 Text("Might We Suggest")
-                    .font(.title2)
-                    .fontWeight(.bold)
+                    .font(.footnote)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
                 
                 // Dynamic Contextual Subheading
                 Text(viewModel.contextSubheading)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
                     .transition(.opacity)
             }
-            .padding(.leading, 8)
+            .padding(.leading, 4)
 
             if viewModel.isLoading {
                 // Shimmer placeholders while first fetch is in progress
@@ -27,8 +29,8 @@ struct PairItWithSectionView: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 Rectangle()
                                     .fill(Color(.systemGray5))
-                                    .frame(width: 140, height: 140)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .frame(width: 146, height: 146)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                     .shimmer()
 
                                 VStack(alignment: .leading, spacing: 4) {
@@ -47,43 +49,16 @@ struct PairItWithSectionView: View {
                                 .padding(.top, 8)
                                 .padding(.horizontal, 2)
                             }
-                            .frame(width: 140)
+                            .frame(width: 146)
                         }
                     }
-                    .padding(.leading, 8)
-                }
-            } else if viewModel.intelligenceLevel == .multiContext {
-                // Grouped Recommendation Rendering (Multiple Carousels)
-                let groupedRecommendations = Dictionary(grouping: viewModel.recommendations, by: { $0.product.category ?? "Other" })
-                let sortedCategories = groupedRecommendations.keys.sorted()
-                
-                VStack(spacing: 24) {
-                    ForEach(sortedCategories, id: \.self) { category in
-                        if let items = groupedRecommendations[category] {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("\(category) Essentials")
-                                    .font(.headline)
-                                    .padding(.leading, 8)
-                                
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 16) {
-                                        ForEach(items) { recommendation in
-                                            NavigationLink(destination: ProductDetailView(product: recommendation.product)) {
-                                                PairItWithCardView(recommendation: recommendation)
-                                            }
-                                            .buttonStyle(PlainButtonStyle())
-                                        }
-                                    }
-                                    .padding(.leading, 8)
-                                }
-                            }
-                        }
-                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 8)
                 }
             } else {
-                // Single Horizontal ScrollView
+                // Single Horizontal ScrollView of Individual White Cards
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 16) {
+                    HStack(spacing: 14) {
                         ForEach(viewModel.recommendations) { recommendation in
                             NavigationLink(destination: ProductDetailView(product: recommendation.product)) {
                                 PairItWithCardView(recommendation: recommendation)
@@ -91,11 +66,12 @@ struct PairItWithSectionView: View {
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
-                    .padding(.leading, 8)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 8)
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
         .animation(.easeInOut(duration: 0.35), value: viewModel.contextSubheading)
         .animation(.easeInOut(duration: 0.4), value: viewModel.recommendations)
     }

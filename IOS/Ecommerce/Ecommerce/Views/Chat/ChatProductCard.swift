@@ -44,22 +44,25 @@ struct ChatProductCard: View {
                         .frame(width: 110, alignment: .leading)
                 }
 
+                let isOutOfStock = product.stock == 0
                 Button(action: {
+                    guard !isOutOfStock else { return }
                     let impact = UIImpactFeedbackGenerator(style: .light)
                     impact.impactOccurred()
                     cartManager.addToCart(product: product)
                     RecommendationEngine.shared.logEvent(productId: product.id, eventType: "add_to_cart")
                 }) {
-                    Text("Add to cart")
+                    Text(isOutOfStock ? "Out of stock" : "Add to cart")
                         .font(.caption2)
                         .fontWeight(.semibold)
-                        .foregroundColor(.white)
+                        .foregroundColor(isOutOfStock ? .secondary : .white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .frame(maxWidth: .infinity)
-                        .background(Color.black)
+                        .background(isOutOfStock ? Color.gray.opacity(0.3) : Color.black)
                         .clipShape(Capsule())
                 }
+                .disabled(isOutOfStock)
                 .padding(.top, 4)
             }
             .padding(10)

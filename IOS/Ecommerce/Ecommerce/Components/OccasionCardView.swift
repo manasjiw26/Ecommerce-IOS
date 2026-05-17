@@ -40,16 +40,6 @@ struct OccasionCardView: View {
             // Content
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
-                    // Badge
-                    Text(occasion.title)
-                        .font(.system(size: 8, weight: .bold))
-                        .kerning(1)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.6))
-                        .foregroundColor(.white)
-                        .cornerRadius(3)
-                    
                     VStack(alignment: .leading, spacing: 2) {
                         Text(occasion.subtitle)
                             .font(.headline)
@@ -75,6 +65,23 @@ struct OccasionCardView: View {
                 .padding(.vertical, 8)
                 .background(Color.white)
                 .clipShape(Capsule())
+            }
+            .padding(16)
+            
+            // Top-Left Planning Badge
+            VStack {
+                HStack {
+                    Text(occasion.title)
+                        .font(.system(size: 10.5, weight: .bold))
+                        .kerning(1.2)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.75))
+                        .foregroundColor(.white)
+                        .cornerRadius(4)
+                    Spacer()
+                }
+                Spacer()
             }
             .padding(16)
         }

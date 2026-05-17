@@ -12,25 +12,25 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 json_get() {
   local url="$1"
-  curl -sS "$url"
+  curl -sS -f "$url"
 }
 
 json_post() {
   local url="$1"
   local body="$2"
-  curl -sS -X POST "$url" -H "Content-Type: application/json" -d "$body"
+  curl -sS -f -X POST "$url" -H "Content-Type: application/json" -d "$body"
 }
 
 json_put() {
   local url="$1"
   local body="$2"
-  curl -sS -X PUT "$url" -H "Content-Type: application/json" -d "$body"
+  curl -sS -f -X PUT "$url" -H "Content-Type: application/json" -d "$body"
 }
 
 json_delete_body() {
   local url="$1"
   local body="$2"
-  curl -sS -X DELETE "$url" -H "Content-Type: application/json" -d "$body"
+  curl -sS -f -X DELETE "$url" -H "Content-Type: application/json" -d "$body"
 }
 
 node_pick() {
@@ -138,7 +138,8 @@ pass "POST /ai/bundle-build"
 
 # AI: chat
 SESSION_ID="demo-session-001"
-json_post "$BASE_URL/ai/chat-session" "{\"device_id\":\"$DEVICE_ID\",\"session_id\":\"$SESSION_ID\",\"message\":\"I need wedding registry help under $200\"}" | node_pick "if(!j.reply) process.exit(1)"
+json_post "$BASE_URL/ai/chat-session" "{\"device_id\":\"$DEVICE_ID\",\"session_id\":\"$SESSION_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"I need wedding registry help under 200\"}]}" \
+  | node_pick "if(!Array.isArray(j.content)||!j.content[0]||!j.content[0].text) process.exit(1)"
 pass "POST /ai/chat-session"
 
 json_get "$BASE_URL/ai/chat-history?device_id=$DEVICE_ID&session_id=$SESSION_ID" | node_pick "if(!Array.isArray(j.messages)) process.exit(1)"
@@ -177,4 +178,3 @@ json_post "$BASE_URL/ai/registry/trending-occasion" "{\"event_type\":\"Wedding\"
 pass "POST /ai/registry/trending-occasion"
 
 echo "ALL TESTS PASSED ✅"
-

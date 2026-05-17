@@ -14,24 +14,34 @@ struct PairItWithCardView: View {
                         image
                             .resizable()
                             .scaledToFill()
-                            .frame(width: 140, height: 140)
+                            .frame(width: 146, height: 146)
                             .clipped()
                     } placeholder: {
                         Rectangle()
                             .fill(Color(.systemGray5))
-                            .frame(width: 140, height: 140)
+                            .frame(width: 146, height: 146)
                             .shimmer()
                     }
                     .id(imageUrlString)
                 } else {
                     Rectangle()
                         .fill(Color(.systemGray5))
-                        .frame(width: 140, height: 140)
+                        .frame(width: 146, height: 146)
                         .overlay(Image(systemName: "photo").foregroundColor(.gray))
                 }
 
-                // Add to Cart button — triggers reactive recommendation refresh
+                if recommendation.product.stock == 0 {
+                    Color.black.opacity(0.4)
+                        .overlay(
+                            Text("OUT OF STOCK")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.white)
+                        )
+                }
+
+                // Add to Cart button
                 Button {
+                    guard recommendation.product.stock ?? 0 > 0 else { return }
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                         cartManager.addToCart(product: recommendation.product)
                         addedToCart = true
@@ -41,43 +51,36 @@ struct PairItWithCardView: View {
                         withAnimation { addedToCart = false }
                     }
                 } label: {
-                    Image(systemName: addedToCart ? "checkmark" : "plus")
-                        .font(.system(size: 12, weight: .bold))
+                    Image(systemName: addedToCart ? "checkmark" : (recommendation.product.stock == 0 ? "xmark" : "plus"))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                        .frame(width: 28, height: 28)
-                        .background(addedToCart ? Color.green : Color.black.opacity(0.75))
+                        .frame(width: 26, height: 26)
+                        .background(addedToCart ? Color.green : (recommendation.product.stock == 0 ? Color.gray.opacity(0.4) : Color.black.opacity(0.75)))
                         .clipShape(Circle())
                 }
                 .padding(8)
                 .buttonStyle(PlainButtonStyle())
+                .disabled(recommendation.product.stock == 0)
             }
-            .frame(width: 140, height: 140)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(width: 146, height: 146)
 
-            // Product Info
-            VStack(alignment: .leading, spacing: 3) {
+            // Product Info with interior padding
+            VStack(alignment: .leading, spacing: 4) {
                 Text(recommendation.product.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.primary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .frame(height: 32, alignment: .topLeading)
 
                 Text("$\(String(format: "%.2f", recommendation.product.price))")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.secondary)
-
-                // AI-generated reasoning — only shown when backend provides it
-                if let reasoning = recommendation.aiReasoning {
-                    Text(reasoning)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .italic()
-                        .lineLimit(2)
-                        .padding(.top, 1)
-                }
             }
-            .padding(.top, 8)
-            .padding(.horizontal, 2)
+            .padding(10)
         }
-        .frame(width: 140)
+        .frame(width: 146)
+        .background(Color(UIColor.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: Color.black.opacity(0.04), radius: 5, x: 0, y: 3)
     }
 }
