@@ -12,9 +12,10 @@ struct SearchChipView: View {
                 .fontWeight(isSelected ? .semibold : .regular)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor : Color(UIColor.systemGray5))
-                .foregroundColor(isSelected ? .white : .primary)
+                .background(isSelected ? Color.primary : Color(UIColor.systemGray5))
+                .foregroundColor(isSelected ? Color(UIColor.systemBackground) : Color.primary)
                 .clipShape(Capsule())
         }
+        .buttonStyle(ScaleButtonStyle())
     }
 }

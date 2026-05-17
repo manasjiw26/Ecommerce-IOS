@@ -203,8 +203,10 @@ struct ProductDetailView: View {
         }
         .onAppear {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
+            RecommendationEngine.shared.recordView(product: product)
             productViewModel.activeProductId = product.id
         }
+
         .onDisappear {
             if productViewModel.activeProductId == product.id {
                 productViewModel.activeProductId = nil
