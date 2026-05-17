@@ -3,9 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../supabaseClient');
 
-const STORAGE = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
 const fixImg = (p) => {
-    if (p?.image_url && !p.image_url.startsWith('http')) p.image_url = `${STORAGE}/${encodeURIComponent(p.image_url)}`;
     return p;
 };
 

@@ -11,15 +11,10 @@
 const { supabase } = require('../../supabaseClient');
 const { distance } = require('fastest-levenshtein');
 
-const SUPABASE_STORAGE_URL = 'https://czahuzfliuuhhegynsjr.supabase.co/storage/v1/object/public/Product%20Images';
-
 /**
- * Fix image URLs (same logic as products.js).
+ * Keep product image URLs exactly as stored in the database.
  */
 function fixImageUrl(product) {
-    if (product.image_url && !product.image_url.startsWith('http')) {
-        product.image_url = `${SUPABASE_STORAGE_URL}/${encodeURIComponent(product.image_url)}`;
-    }
     return product;
 }
 
