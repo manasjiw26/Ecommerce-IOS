@@ -8,6 +8,7 @@ struct CheckoutFlowView: View {
     @EnvironmentObject var cartManager: CartManager
 
     @State private var path: [Route] = []
+    let checkoutItems: [CartItem]
 
     // Shipping / delivery
     @State private var fullName: String = AuthSession.shared.currentUser?.name ?? ""
@@ -44,11 +45,23 @@ struct CheckoutFlowView: View {
         var id: String { rawValue }
     }
 
+    init(checkoutItems: [CartItem] = []) {
+        self.checkoutItems = checkoutItems
+    }
+
+    private var effectiveItems: [CartItem] {
+        checkoutItems.isEmpty ? cartManager.items : checkoutItems
+    }
+
+    private var effectiveTotal: Double {
+        effectiveItems.reduce(0) { $0 + ($1.product.price * Double($1.quantity)) }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             CheckoutReviewStep(
-                total: cartManager.total,
-                itemCount: cartManager.items.count,
+                items: effectiveItems,
+                total: effectiveTotal,
                 onContinue: { path.append(.details) }
             )
             .environmentObject(cartManager)
@@ -78,7 +91,7 @@ struct CheckoutFlowView: View {
                 case .payment:
                     CheckoutPaymentStep(
                         paymentMethod: $paymentMethod,
-                        total: cartManager.total,
+                        total: effectiveTotal,
                         isPlacingOrder: isPlacingOrder,
                         errorMessage: placeOrderError,
                         onPlaceOrder: { Task { await placeOrder() } }
@@ -101,7 +114,7 @@ struct CheckoutFlowView: View {
 
     private func placeOrder() async {
         placeOrderError = nil
-        guard !cartManager.items.isEmpty else {
+        guard !effectiveItems.isEmpty else {
             placeOrderError = "Your cart is empty."
             return
         }
@@ -120,9 +133,9 @@ struct CheckoutFlowView: View {
             }
         }()
 
-        let summary = cartManager.items.map { "\($0.product.name) x\($0.quantity)" }.joined(separator: ", ")
-        let imageUrl = cartManager.items.first?.product.imageUrl ?? ""
-        let cartPayload = cartManager.items.map { ["product_id": $0.product.id, "quantity": $0.quantity] }
+        let summary = effectiveItems.map { "\($0.product.name) x\($0.quantity)" }.joined(separator: ", ")
+        let imageUrl = effectiveItems.first?.product.imageUrl ?? ""
+        let cartPayload = effectiveItems.map { ["product_id": $0.product.id, "quantity": $0.quantity] }
 
         guard let url = URL(string: "\(APIService.baseURL)/orders") else {
             placeOrderError = "Invalid backend URL."
@@ -135,7 +148,7 @@ struct CheckoutFlowView: View {
 
         let body: [String: Any] = [
             "user_id": userId,
-            "total": cartManager.total,
+            "total": effectiveTotal,
             "items_summary": summary,
             "image_url": imageUrl,
             "payment_id": paymentId,
@@ -159,8 +172,15 @@ struct CheckoutFlowView: View {
 
             // Update local orders list (Orders tab) and clear cart (local + backend will clear too).
             await MainActor.run {
-                OrderManager.shared.addOrder(from: cartManager.items, total: cartManager.total, paymentId: paymentId)
-                cartManager.removeAll()
+                OrderManager.shared.addOrder(from: effectiveItems, total: effectiveTotal, paymentId: paymentId)
+                // If we're doing selective checkout, remove only the checked out line items.
+                if checkoutItems.isEmpty {
+                    cartManager.removeAll()
+                } else {
+                    for item in checkoutItems {
+                        cartManager.removeLineItem(product: item.product)
+                    }
+                }
             }
 
             path.append(.confirmation)
@@ -171,15 +191,14 @@ struct CheckoutFlowView: View {
 }
 
 private struct CheckoutReviewStep: View {
-    @EnvironmentObject var cartManager: CartManager
+    let items: [CartItem]
     let total: Double
-    let itemCount: Int
     let onContinue: () -> Void
 
     var body: some View {
         List {
             Section {
-                ForEach(cartManager.items) { item in
+                ForEach(items) { item in
                     HStack(spacing: 12) {
                         if let url = item.product.imageUrl {
                             CachedImageView(urlString: url) { img in
@@ -380,4 +399,3 @@ private struct CheckoutConfirmationStep: View {
         .padding()
     }
 }
-

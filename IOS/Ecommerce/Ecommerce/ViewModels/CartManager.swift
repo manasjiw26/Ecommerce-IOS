@@ -70,20 +70,26 @@ class CartManager: ObservableObject {
     }
     
     func addToCart(product: Product) {
+        addToCart(product: product, quantity: 1)
+    }
+
+    func addToCart(product: Product, quantity: Int) {
+        guard quantity != 0 else { return }
         if let index = items.firstIndex(where: { $0.product.id == product.id }) {
-            items[index].quantity += 1
+            items[index].quantity += quantity
+            if items[index].quantity < 1 { items[index].quantity = 1 }
             if let user = AuthSession.shared.currentUser {
                 Task {
-                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: 1)
+                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: quantity)
                     await fetchBackendCart(userId: user.id)
                 }
             }
         } else {
-            let newItem = CartItem(product: product, quantity: 1)
+            let newItem = CartItem(product: product, quantity: max(1, quantity))
             items.append(newItem)
             if let user = AuthSession.shared.currentUser {
                 Task {
-                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: 1)
+                    _ = try? await APIService.shared.addToCart(userId: user.id, productId: product.id, quantity: quantity)
                     await fetchBackendCart(userId: user.id)
                 }
             }
@@ -119,6 +125,18 @@ class CartManager: ObservableObject {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
             saveCart()
         }
+    }
+
+    // Remove the entire line item, regardless of quantity.
+    func removeLineItem(product: Product) {
+        guard let index = items.firstIndex(where: { $0.product.id == product.id }) else { return }
+        let item = items[index]
+        items.remove(at: index)
+        if AuthSession.shared.currentUser != nil, let backendId = item.backendId {
+            Task { try? await APIService.shared.removeFromCart(itemId: backendId) }
+        }
+        RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_remove")
+        saveCart()
     }
     
     func removeAll() {

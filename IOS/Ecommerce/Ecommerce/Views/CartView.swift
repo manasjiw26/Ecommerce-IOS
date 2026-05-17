@@ -14,6 +14,15 @@ struct CartView: View {
 
     @State private var stockMap: [Int: Int] = [:]   // productId → live stock
     @State private var isCheckingStock = false
+    @State private var selectedProductIds: Set<Int> = []
+    @State private var previousCartProductIds: Set<Int> = []
+
+    @State private var undoBanner: UndoBannerState? = nil
+
+    struct UndoBannerState: Equatable {
+        let product: Product
+        let quantity: Int
+    }
 
     var outOfStockItems: [CartItem] {
         cartManager.items.filter { item in
@@ -22,8 +31,23 @@ struct CartView: View {
         }
     }
 
+    var selectedItems: [CartItem] {
+        cartManager.items.filter { selectedProductIds.contains($0.product.id) }
+    }
+
+    var selectedTotal: Double {
+        selectedItems.reduce(0) { $0 + ($1.product.price * Double($1.quantity)) }
+    }
+
+    var outOfStockSelected: [CartItem] {
+        selectedItems.filter { item in
+            let available = stockMap[item.product.id] ?? (item.product.stock ?? 999)
+            return available < item.quantity
+        }
+    }
+
     var canCheckout: Bool {
-        !cartManager.items.isEmpty && outOfStockItems.isEmpty && !isCheckingStock
+        !selectedItems.isEmpty && outOfStockSelected.isEmpty && !isCheckingStock
     }
 
     var body: some View {
@@ -47,7 +71,7 @@ struct CartView: View {
             }
         }
         .sheet(isPresented: $showingCheckout) {
-            CheckoutFlowView()
+            CheckoutFlowView(checkoutItems: selectedItems)
                 .environmentObject(cartManager)
         }
         .sheet(isPresented: $showSavedForLater) {
@@ -57,6 +81,29 @@ struct CartView: View {
         .safeAreaInset(edge: .bottom) {
             if !cartManager.items.isEmpty {
                 checkoutBar
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let banner = undoBanner {
+                HStack(spacing: 12) {
+                    Text("Removed \(banner.product.name)")
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("Undo") {
+                        cartManager.addToCart(product: banner.product, quantity: banner.quantity)
+                        undoBanner = nil
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 90)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .refreshable {
@@ -186,29 +233,46 @@ struct CartView: View {
                     availableStock: stockMap[item.product.id] ?? (item.product.stock ?? 999)
                 )
                 .environmentObject(cartManager)
+                .contentShape(Rectangle())
+                .overlay(alignment: .leading) {
+                    Button {
+                        toggleSelected(productId: item.product.id)
+                    } label: {
+                        Image(systemName: selectedProductIds.contains(item.product.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(selectedProductIds.contains(item.product.id) ? .accentColor : .secondary)
+                            .font(.system(size: 20, weight: .semibold))
+                            .padding(.leading, 6)
+                            .padding(.trailing, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selectedProductIds.contains(item.product.id) ? "Selected" : "Not selected")
+                }
                 .swipeActions(edge: .trailing) {
+                    Button {
+                        Task {
+                            try? await SavedForLaterService.shared.save(
+                                deviceId: RecommendationEngine.shared.deviceId,
+                                productId: item.product.id
+                            )
+                            selectedProductIds.remove(item.product.id)
+                            cartManager.removeLineItem(product: item.product)
+                            await savedVM.refresh()
+                        }
+                    } label: {
+                        Label("Save", systemImage: "bookmark")
+                    }
+                    .tint(.orange)
+
                     Button(role: .destructive) {
-                        for _ in 0..<max(1, item.quantity) {
-                            cartManager.removeFromCart(product: item.product)
+                        selectedProductIds.remove(item.product.id)
+                        undoBanner = UndoBannerState(product: item.product, quantity: item.quantity)
+                        cartManager.removeLineItem(product: item.product)
+                        Task {
+                            try? await Task.sleep(nanoseconds: 4_500_000_000)
+                            if undoBanner?.product.id == item.product.id { undoBanner = nil }
                         }
                     } label: {
                         Label("Remove", systemImage: "trash")
-                    }
-
-                    if (stockMap[item.product.id] ?? (item.product.stock ?? 999)) < item.quantity {
-                        Button {
-                            Task {
-                                try? await SavedForLaterService.shared.save(
-                                    deviceId: RecommendationEngine.shared.deviceId,
-                                    productId: item.product.id
-                                )
-                                cartManager.removeFromCart(product: item.product)
-                                await savedVM.refresh()
-                            }
-                        } label: {
-                            Label("Save", systemImage: "bookmark")
-                        }
-                        .tint(.orange)
                     }
                 }
             }
@@ -241,7 +305,7 @@ struct CartView: View {
                 Text("Total")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text("$\(String(format: "%.2f", cartManager.total))")
+                Text("$\(String(format: "%.2f", selectedTotal))")
                     .font(.headline)
             }
             Spacer()
@@ -271,11 +335,29 @@ struct CartView: View {
     // MARK: - Refresh
 
     private func refreshAll() async {
+        // Keep selection stable while cart changes; default newly-added items to selected.
+        let current = Set(cartManager.items.map { $0.product.id })
+        if selectedProductIds.isEmpty {
+            selectedProductIds = current
+        } else {
+            let newIds = current.subtracting(previousCartProductIds)
+            selectedProductIds = selectedProductIds.intersection(current).union(newIds)
+        }
+        previousCartProductIds = current
+
         occasionViewModel.detectOccasion(from: cartManager.items)
         pairItWithViewModel.fetchRecommendations(cartItems: cartManager.items)
         await savedVM.refresh()
         await refreshStock()
         await intelligenceVM.refresh(cartItems: cartManager.items)
+    }
+
+    private func toggleSelected(productId: Int) {
+        if selectedProductIds.contains(productId) {
+            selectedProductIds.remove(productId)
+        } else {
+            selectedProductIds.insert(productId)
+        }
     }
 
     private func refreshStock() async {
