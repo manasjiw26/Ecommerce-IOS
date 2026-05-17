@@ -21,33 +21,39 @@ struct BagIntelligenceView: View {
                         .foregroundColor(.secondary)
                         .padding(.top, 2)
                     Text(nudge.reason)
-                        .font(.subheadline)
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
+                .padding(.vertical, 2)
             }
 
             if let coach {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
                         Image(systemName: "sparkles")
                         Text("Bag Coach")
-                            .font(.headline)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
                         Spacer()
                         Text("\(coach.score)")
-                            .font(.headline)
-                            .fontWeight(.bold)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color(.tertiarySystemFill))
+                            .clipShape(Capsule())
                     }
 
                     if let banner = coach.bannerInsight, !banner.isEmpty {
                         Text(banner)
-                            .font(.subheadline)
+                            .font(.footnote)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text(coach.headline)
-                            .font(.subheadline)
+                            .font(.footnote)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -57,7 +63,7 @@ struct BagIntelligenceView: View {
                             ProgressView(value: Double(pct), total: 100)
                                 .tint(.primary)
                             Text("Add $\(String(format: "%.2f", next.remaining)) to unlock \(next.label).")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -68,9 +74,8 @@ struct BagIntelligenceView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(14)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
-

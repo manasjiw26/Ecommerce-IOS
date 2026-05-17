@@ -60,6 +60,7 @@ struct BagView: View {
                     )
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowSeparator(.hidden)
 
                 Section("Items") {
                     ForEach(cartManager.items) { item in
@@ -126,6 +127,7 @@ struct BagView: View {
                         onAdd: { p in cartManager.addToCart(product: p) }
                     )
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowSeparator(.hidden)
                 }
 
                 Section("Pair it with") {
@@ -136,6 +138,8 @@ struct BagView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Bag (\(selectedItems.count))")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -241,6 +245,7 @@ private struct BagFooter: View {
                     .foregroundColor(.secondary)
                 Text("$\(String(format: "%.2f", subtotal))")
                     .font(.headline)
+                    .fontWeight(.semibold)
             }
             Spacer()
             Button(action: onCheckout) {
@@ -255,7 +260,8 @@ private struct BagFooter: View {
             .tint(.black)
             .disabled(!canCheckout)
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 }
@@ -277,7 +283,7 @@ private struct UndoSnackbar: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .padding(.horizontal, 16)
     }
 }
@@ -348,7 +354,7 @@ private struct BagItemRow: View {
                         img.resizable().scaledToFill()
                     } placeholder: { Color(.systemGray5) }
                         .frame(width: 56, height: 56)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -418,4 +424,3 @@ private extension Set where Element == Int {
         if contains(id) { remove(id) } else { insert(id) }
     }
 }
-

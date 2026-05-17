@@ -68,12 +68,12 @@ struct CheckoutSheetView: View {
                         reviewSection
                         deliverySection
                         paymentSection
-                        finalizeSection
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
                     .padding(.bottom, 120)
                 }
+                .scrollIndicators(.hidden)
 
                 if let confirmation {
                     CheckoutConfirmationOverlay(confirmation: confirmation) {
@@ -87,6 +87,11 @@ struct CheckoutSheetView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if confirmation == nil {
+                    placeOrderBar
                 }
             }
         }
@@ -108,7 +113,8 @@ struct CheckoutSheetView: View {
     private var reviewSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Review")
-                .font(.headline)
+                .font(.subheadline)
+                .fontWeight(.semibold)
 
             ForEach(checkoutItems) { item in
                 HStack(alignment: .top, spacing: 10) {
@@ -144,15 +150,16 @@ struct CheckoutSheetView: View {
                 .font(.subheadline)
             }
         }
-        .padding(14)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var deliverySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Delivery")
-                .font(.headline)
+                .font(.subheadline)
+                .fontWeight(.semibold)
 
             VStack(spacing: 10) {
                 TextField("Full name", text: $fullName)
@@ -192,15 +199,16 @@ struct CheckoutSheetView: View {
             }
             .font(.subheadline)
         }
-        .padding(14)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var paymentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Payment")
-                .font(.headline)
+                .font(.subheadline)
+                .fontWeight(.semibold)
 
             Picker("Method", selection: $paymentMethod) {
                 ForEach(PaymentMethod.allCases) { m in
@@ -221,52 +229,52 @@ struct CheckoutSheetView: View {
                     .foregroundColor(.red)
             }
         }
-        .padding(14)
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    private var finalizeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Order")
-                .font(.headline)
-
+    private var placeOrderBar: some View {
+        VStack(spacing: 10) {
             HStack {
-                Text("Total")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Total")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("$\(String(format: "%.2f", grandTotal))")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                }
                 Spacer()
-                Text("$\(String(format: "%.2f", grandTotal))")
-                    .fontWeight(.semibold)
-            }
-            .font(.subheadline)
-
-            Button {
-                Task {
-                    errorMessage = nil
-                    if paymentMethod == .razorpay {
-                        if Config.razorpayKey == "rzp_test_YOUR_KEY_HERE" {
-                            errorMessage = "Razorpay key missing. Add it or use Mock Pay."
-                            return
+                Button {
+                    Task {
+                        errorMessage = nil
+                        if paymentMethod == .razorpay {
+                            if Config.razorpayKey == "rzp_test_YOUR_KEY_HERE" {
+                                errorMessage = "Razorpay key missing. Add it or use Mock Pay."
+                                return
+                            }
+                            showRazorpay = true
+                        } else {
+                            await placeOrder(paymentId: "mock_\(UUID().uuidString.prefix(8))")
                         }
-                        showRazorpay = true
+                    }
+                } label: {
+                    if isPlacing {
+                        ProgressView().tint(.white).frame(width: 150)
                     } else {
-                        await placeOrder(paymentId: "mock_\(UUID().uuidString.prefix(8))")
+                        Text("Place Order ($\(String(format: "%.2f", grandTotal)))")
+                            .frame(minWidth: 150)
                     }
                 }
-            } label: {
-                if isPlacing {
-                    ProgressView().tint(.white).frame(maxWidth: .infinity)
-                } else {
-                    Text("Place Order ($\(String(format: "%.2f", grandTotal)))")
-                        .frame(maxWidth: .infinity)
-                }
+                .buttonStyle(.borderedProminent)
+                .tint(.black)
+                .disabled(isPlacing || !canPlaceOrder)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.black)
-            .disabled(isPlacing || !canPlaceOrder)
         }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
     }
 
     private var canPlaceOrder: Bool {
@@ -390,4 +398,3 @@ private struct RazorpayPaymentCaptureView: View {
         }
     }
 }
-
