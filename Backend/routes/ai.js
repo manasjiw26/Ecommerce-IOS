@@ -1810,4 +1810,48 @@ router.post('/aesthetic-suggest', async (req, res) => {
     }
 });
 
+// ── POST /ai/bubble-context ───────────────────────────────────────────────────
+// Returns a context-aware opening message for ChatView when opened from a product
+router.post('/bubble-context', async (req, res) => {
+    const { context = 'general', product_id, product_name, cart_items = [], device_id } = req.body;
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) console.log('[AI:chat] POST /bubble-context body:', req.body);
+
+    const fallback = 'How can I help with your shopping today?';
+
+    if (!ai || !process.env.GEMINI_API_KEY) {
+        return res.json({ message: fallback });
+    }
+
+    try {
+        const cartStr = Array.isArray(cart_items) && cart_items.length
+            ? cart_items.join(', ')
+            : 'empty cart';
+
+        const prompt = `The user just tapped the AI button while looking at: ${product_name || 'a product'}.
+Their cart has: ${cartStr}.
+Write a 1-sentence opening message for the chat, as if you just noticed them.
+Max 12 words. Be warm and specific. No "Hello" or "Hi". Start with what you noticed.
+Example: "That skillet is a bestseller — want to see what pairs with it?"
+Respond with only the message, nothing else.`;
+
+        const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 6000)
+        );
+        const geminiCall = ai.models.generateContent({
+            model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.8, maxOutputTokens: 40 }
+        });
+
+        const response = await Promise.race([geminiCall, timeout]);
+        const message = (response.text() || '').trim() || fallback;
+        if (isDev) console.log('[AI:chat] /bubble-context response:', message);
+        return res.json({ message });
+    } catch (err) {
+        console.log('[AI] Gemini error:', err.message);
+        return res.json({ message: fallback });
+    }
+});
+
 module.exports = router;

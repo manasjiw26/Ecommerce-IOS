@@ -146,6 +146,11 @@ class CartManager: ObservableObject {
             items.append(CartItem(product: product, quantity: max(1, quantity)))
         }
         RecommendationEngine.shared.logEvent(productId: product.id, eventType: "cart_add")
+        NotificationCenter.default.post(
+            name: .aiCartUpdated,
+            object: nil,
+            userInfo: ["productName": product.name, "itemCount": items.count]
+        )
         saveCart()
 
         // 2. Backend sync — only refreshes local state if the API call SUCCEEDS.

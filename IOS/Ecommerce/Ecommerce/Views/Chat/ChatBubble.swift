@@ -11,9 +11,11 @@ struct ChatBubble: View {
                 if message.role == .user { Spacer(minLength: 0) }
 
                 if message.role == .assistant {
-                    // Bot avatar
+                    // Bot avatar with AI pulse shadow
                     ZStack {
                         Circle().fill(Color.black).frame(width: 28, height: 28)
+                            .shadow(color: Color(hex: "#1a1040").opacity(0.35), radius: message.isLoading ? 8 : 3, x: 0, y: 0)
+                            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: message.isLoading)
                         Image(systemName: "sparkles")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.white)
@@ -49,16 +51,14 @@ struct ChatBubble: View {
             .frame(maxWidth: .infinity)
 
             // Attachments
-            if !message.isLoading {
-                ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                    let isProducts: Bool = {
-                        if case .products = attachment { return true }
-                        return false
-                    }()
-                    attachmentView(for: attachment)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, (message.role == .assistant && !isProducts) ? 36 : 0)
-                }
+            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                let isProducts: Bool = {
+                    if case .products = attachment { return true }
+                    return false
+                }()
+                attachmentView(for: attachment)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, (message.role == .assistant && !isProducts) ? 36 : 0)
             }
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -104,6 +104,7 @@ struct TypingIndicator: View {
     }
 }
 
+
 // MARK: - Bubble shape
 struct BubbleShape: Shape {
     let isUser: Bool
@@ -115,49 +116,3 @@ struct BubbleShape: Shape {
     }
 }
 
-// MARK: - Typewriter Text
-struct TypewriterText: View {
-    let fullText: String
-    let messageId: UUID
-    @State private var displayedText: String = ""
-    @State private var isFinished: Bool = false
-
-    // Track which messages have already been animated so we don't re-animate on scroll
-    static var animatedIDs: Set<UUID> = []
-
-    var body: some View {
-        Text(isFinished ? fullText : displayedText)
-            .onAppear {
-                if Self.animatedIDs.contains(messageId) {
-                    isFinished = true
-                    displayedText = fullText
-                } else {
-                    typeOut()
-                }
-            }
-            .onChange(of: fullText) { oldValue, newValue in
-                // If the text actually changes (e.g., fallback update), we should reset and re-type
-                if newValue != fullText {
-                    displayedText = ""
-                    isFinished = false
-                    typeOut()
-                }
-            }
-    }
-
-    private func typeOut() {
-        Task {
-            Self.animatedIDs.insert(messageId)
-            var tempStr = ""
-            for char in fullText {
-                // If the user scrolls away and view is destroyed, Task can be cancelled
-                if Task.isCancelled { break }
-                tempStr.append(char)
-                await MainActor.run { displayedText = tempStr }
-                // 15ms per character creates a fast, natural typing feel
-                try? await Task.sleep(nanoseconds: 15_000_000)
-            }
-            await MainActor.run { isFinished = true }
-        }
-    }
-}

@@ -4,6 +4,7 @@ import SwiftUI
 struct EcommerceApp: App {
     @StateObject private var cartManager = CartManager()
     @StateObject private var productViewModel = ProductViewModel()
+    @StateObject private var aiPresence = AIPresenceManager()
     @State private var isLoggedIn: Bool = UserDefaults.standard.bool(forKey: "isLoggedIn")
     @State private var showLogin = false
     @State private var showSignUp = false
@@ -17,6 +18,7 @@ struct EcommerceApp: App {
                     .environmentObject(cartManager)
                     .environmentObject(productViewModel)
                     .environmentObject(AuthSession.shared)
+                    .environmentObject(aiPresence)
 
                 // Onboarding overlays on top when triggered
                 if showSignUp {

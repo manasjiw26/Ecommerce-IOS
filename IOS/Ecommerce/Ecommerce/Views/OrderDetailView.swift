@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OrderDetailView: View {
     let order: PlacedOrder
+    @State private var stepsRevealed = 0
     
     var statusColor: Color {
         switch order.status {
@@ -41,10 +42,30 @@ struct OrderDetailView: View {
                         .padding(.horizontal)
                     
                     VStack(spacing: 0) {
-                        OrderStep(title: "Order Placed", subtitle: order.date.formatted(date: .abbreviated, time: .shortened), isCompleted: true, isLast: false)
-                        OrderStep(title: "Processing", subtitle: "Your order is being prepared", isCompleted: true, isLast: false)
-                        OrderStep(title: "Shipped", subtitle: order.status == "Delivered" || order.status == "Shipped" ? "On the way" : "Pending", isCompleted: order.status == "Shipped" || order.status == "Delivered", isLast: false)
-                        OrderStep(title: "Delivered", subtitle: order.status == "Delivered" ? "Package delivered" : "Pending", isCompleted: order.status == "Delivered", isLast: true)
+                        ForEach(Array(["Order Placed", "Processing", "Shipped", "Delivered"].enumerated()), id: \.offset) { i, title in
+                            let subtitle: String = {
+                                switch i {
+                                case 0: return order.date.formatted(date: .abbreviated, time: .shortened)
+                                case 1: return "Your order is being prepared"
+                                case 2: return (order.status == "Shipped" || order.status == "Delivered") ? "On the way" : "Pending"
+                                case 3: return order.status == "Delivered" ? "Package delivered" : "Pending"
+                                default: return ""
+                                }
+                            }()
+                            let isCompleted: Bool = {
+                                switch i {
+                                case 0, 1: return true
+                                case 2: return order.status == "Shipped" || order.status == "Delivered"
+                                case 3: return order.status == "Delivered"
+                                default: return false
+                                }
+                            }()
+                            
+                            OrderStep(title: title, subtitle: subtitle, isCompleted: isCompleted, isLast: i == 3)
+                                .opacity(stepsRevealed > i ? 1 : 0)
+                                .offset(x: stepsRevealed > i ? 0 : -20)
+                                .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(Double(i) * 0.15), value: stepsRevealed)
+                        }
                     }
                     .padding()
                     .background(Color(UIColor.systemBackground))
@@ -133,6 +154,11 @@ struct OrderDetailView: View {
         .navigationTitle("Order Details")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                stepsRevealed = 4
+            }
+        }
     }
 }
 

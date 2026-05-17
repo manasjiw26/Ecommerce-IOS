@@ -2,11 +2,23 @@ import SwiftUI
 import PhotosUI
 
 struct ChatView: View {
+    var initialBubbleMessage: String? = nil
+
     @StateObject private var viewModel = ChatViewModel()
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
+    @EnvironmentObject var aiPresence: AIPresenceManager
     @Environment(\.dismiss) var dismiss
     @State private var scrollProxy: ScrollViewProxy? = nil
+    @State private var placeholderIndex = 0
+    
+    private let placeholders = [
+        "Ask me anything…",
+        "Looking for a gift idea?",
+        "I can style a table for you",
+        "Try: 'cast iron under $50'",
+        "What occasion are you shopping for?"
+    ]
 
     var body: some View {
         NavigationStack {
@@ -51,7 +63,7 @@ struct ChatView: View {
                 Divider()
 
                 // Input bar
-                ChatInputBar(viewModel: viewModel)
+                ChatInputBar(viewModel: viewModel, placeholders: placeholders, placeholderIndex: placeholderIndex)
             }
             .navigationTitle("AI Assistant")
             .navigationBarTitleDisplayMode(.inline)
@@ -73,7 +85,19 @@ struct ChatView: View {
                 viewModel.productViewModel = productViewModel
                 viewModel.context.lastViewedProductId = productViewModel.activeProductId
                 viewModel.messages.removeAll()
-                viewModel.sendWelcomeMessage()
+                viewModel.sendWelcomeMessage(withBubbleContext: initialBubbleMessage)
+                aiPresence.isAIActive = true
+                aiPresence.dismissBubble()
+                
+                // Cycle placeholder
+                Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                    Task { @MainActor in
+                        placeholderIndex = (placeholderIndex + 1) % placeholders.count
+                    }
+                }
+            }
+            .onDisappear {
+                aiPresence.isAIActive = false
             }
         }
     }
@@ -89,6 +113,8 @@ struct ChatView: View {
 // MARK: - Input Bar
 struct ChatInputBar: View {
     @ObservedObject var viewModel: ChatViewModel
+    let placeholders: [String]
+    let placeholderIndex: Int
     @State private var selectedItem: PhotosPickerItem? = nil
 
     var body: some View {
@@ -113,7 +139,7 @@ struct ChatInputBar: View {
             }
 
             // Text field
-            TextField("Ask me anything…", text: $viewModel.inputText, axis: .vertical)
+            TextField(placeholders.indices.contains(placeholderIndex) ? placeholders[placeholderIndex] : "Ask me anything…", text: $viewModel.inputText, axis: .vertical)
                 .font(.subheadline)
                 .lineLimit(1...4)
                 .padding(.horizontal, 14)
@@ -121,6 +147,7 @@ struct ChatInputBar: View {
                 .background(Color(UIColor.secondarySystemBackground))
                 .clipShape(Capsule())
                 .onSubmit { viewModel.sendMessage() }
+                .animation(.easeInOut(duration: 0.3), value: placeholderIndex)
 
             // Send / mic
             if viewModel.inputText.isEmpty {

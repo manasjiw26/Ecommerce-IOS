@@ -107,6 +107,9 @@ struct RazorpayCheckoutView: View {
             .navigationBarItems(leading: Button("Close") {
                 presentationMode.wrappedValue.dismiss()
             })
+            .onAppear {
+                NotificationCenter.default.post(name: .aiCheckoutStarted, object: nil)
+            }
         }
     }
 }

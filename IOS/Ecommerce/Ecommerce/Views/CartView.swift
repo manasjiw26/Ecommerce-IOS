@@ -3,6 +3,7 @@ import SwiftUI
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
+    @EnvironmentObject var aiPresence: AIPresenceManager
 
     @StateObject private var occasionViewModel = OccasionViewModel()
     @StateObject private var pairItWithViewModel = PairItWithViewModel()
@@ -335,6 +336,9 @@ struct CartView: View {
     // MARK: - Refresh
 
     private func refreshAll() async {
+        aiPresence.isAIActive = true
+        defer { aiPresence.isAIActive = false }
+
         // Keep selection stable while cart changes; default newly-added items to selected.
         let current = Set(cartManager.items.map { $0.product.id })
         if selectedProductIds.isEmpty {
@@ -350,6 +354,11 @@ struct CartView: View {
         await savedVM.refresh()
         await refreshStock()
         await intelligenceVM.refresh(cartItems: cartManager.items)
+
+        // Notify AI bubble
+        if !cartManager.items.isEmpty {
+            NotificationCenter.default.post(name: .aiCartUpdated, object: nil)
+        }
     }
 
     private func toggleSelected(productId: Int) {
