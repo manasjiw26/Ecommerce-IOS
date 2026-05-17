@@ -80,7 +80,7 @@ struct SplashScreenView: View {
 
                 // Brand name
                 VStack(spacing: 6) {
-                    Text("Shop Ease")
+                    Text("ShopEase")
                         .font(.system(size: 40, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .tracking(1)

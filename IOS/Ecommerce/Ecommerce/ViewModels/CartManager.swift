@@ -2,13 +2,17 @@ import Foundation
 import Combine
 import SwiftUI
 
+/// Represents an individual item in the user's shopping cart.
 struct CartItem: Identifiable, Codable, Equatable {
+    /// The unique identifier assigned by the Supabase backend (if synced).
     var backendId: Int?
+    /// The product being purchased.
     let product: Product
+    /// The number of units requested.
     var quantity: Int
 
-    // Stable identity for SwiftUI lists and persistence merging.
-    // This also prevents transient UI "duplication" during async refreshes.
+    /// Stable identity for SwiftUI lists and persistence merging.
+    /// This also prevents transient UI "duplication" during async refreshes.
     var id: Int { product.id }
 
     static func == (lhs: CartItem, rhs: CartItem) -> Bool {
@@ -16,8 +20,12 @@ struct CartItem: Identifiable, Codable, Equatable {
     }
 }
 
+/// The global state manager for the shopping cart.
+/// Maintains an in-memory cart for guests, which is synced to the backend
+/// upon user authentication via `GuestDataMigrator`.
 @MainActor
 class CartManager: ObservableObject {
+    /// The list of items currently in the cart.
     @Published private(set) var items: [CartItem] = []
     private let saveKey = "SavedCart"
     private var cancellables = Set<AnyCancellable>()

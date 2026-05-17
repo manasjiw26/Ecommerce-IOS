@@ -6,12 +6,7 @@ struct SignUpView: View {
     var onSignUpSuccess: () -> Void
     var onBack: () -> Void
 
-    @State private var name            = ""
-    @State private var email           = ""
-    @State private var password        = ""
-    @State private var confirmPassword = ""
-    @State private var isLoading       = false
-    @State private var errorMessage: String? = nil
+    @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focusedField: Field?
 
     enum Field { case name, email, password, confirm }
@@ -52,7 +47,7 @@ struct SignUpView: View {
                                 .font(.system(size: 20, weight: .semibold))
                                 .foregroundColor(.white)
                         }
-                        Text("Shop Ease")
+                        Text("ShopEase")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                     }
@@ -62,23 +57,23 @@ struct SignUpView: View {
                         Text("Create account")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(.white)
-                        Text("Join Shop Ease — it's free")
+                        Text("Join ShopEase — it's free")
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.55))
                     }
                     .padding(.bottom, 32)
 
                     VStack(spacing: 14) {
-                        DarkAuthField(placeholder: "Full Name", text: $name, icon: "person", isSecure: false)
+                        DarkAuthField(placeholder: "Full Name", text: $viewModel.name, icon: "person", isSecure: false)
                             .focused($focusedField, equals: .name).submitLabel(.next).onSubmit { focusedField = .email }
-                        DarkAuthField(placeholder: "Email", text: $email, icon: "envelope", isSecure: false)
+                        DarkAuthField(placeholder: "Email", text: $viewModel.email, icon: "envelope", isSecure: false)
                             .focused($focusedField, equals: .email).submitLabel(.next).onSubmit { focusedField = .password }
-                        DarkAuthField(placeholder: "Password", text: $password, icon: "lock", isSecure: true)
+                        DarkAuthField(placeholder: "Password", text: $viewModel.password, icon: "lock", isSecure: true)
                             .focused($focusedField, equals: .password).submitLabel(.next).onSubmit { focusedField = .confirm }
-                        DarkAuthField(placeholder: "Confirm Password", text: $confirmPassword, icon: "lock.shield", isSecure: true)
+                        DarkAuthField(placeholder: "Confirm Password", text: $viewModel.confirmPassword, icon: "lock.shield", isSecure: true)
                             .focused($focusedField, equals: .confirm).submitLabel(.done).onSubmit { attemptSignUp() }
 
-                        if let error = errorMessage {
+                        if let error = viewModel.errorMessage {
                             Text(error).font(.caption).foregroundColor(.red.opacity(0.9)).padding(.horizontal, 4)
                         }
                     }
@@ -86,7 +81,7 @@ struct SignUpView: View {
 
                     Button(action: attemptSignUp) {
                         ZStack {
-                            if isLoading { ProgressView().tint(.black) }
+                            if viewModel.isLoading { ProgressView().tint(.black) }
                             else { Text("Create Account").font(.headline).foregroundColor(.black) }
                         }
                         .frame(maxWidth: .infinity)
@@ -94,7 +89,7 @@ struct SignUpView: View {
                         .background(Color.white)
                         .cornerRadius(14)
                     }
-                    .disabled(isLoading)
+                    .disabled(viewModel.isLoading)
                 }
                 .padding(.horizontal, 28)
             }
@@ -102,23 +97,7 @@ struct SignUpView: View {
     }
 
     private func attemptSignUp() {
-        focusedField = nil; errorMessage = nil
-        guard !name.isEmpty, !email.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
-            errorMessage = "Please fill in all fields."; return
-        }
-        guard email.contains("@") else { errorMessage = "Enter a valid email."; return }
-        guard password.count >= 6 else { errorMessage = "Password must be ≥ 6 characters."; return }
-        guard password == confirmPassword else { errorMessage = "Passwords do not match."; return }
-
-        isLoading = true
-        Task {
-            do {
-                _ = try await AuthService.shared.signUp(name: name, email: email, password: password)
-                await GuestDataMigrator.migrate()
-                await MainActor.run { isLoading = false; onSignUpSuccess() }
-            } catch {
-                await MainActor.run { isLoading = false; errorMessage = error.localizedDescription }
-            }
-        }
+        focusedField = nil
+        viewModel.attemptSignUp(onSuccess: onSignUpSuccess)
     }
 }

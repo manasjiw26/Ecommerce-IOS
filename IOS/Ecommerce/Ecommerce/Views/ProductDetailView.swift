@@ -4,79 +4,23 @@ import UIKit
 struct ProductDetailView: View {
     let product: Product
     var showCloseButton: Bool = false
+    
+    @StateObject private var viewModel: ProductDetailViewModel
+    
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
     @EnvironmentObject var savedVM: SavedForLaterViewModel
+    
     @ObservedObject private var recoEngine = RecommendationEngine.shared
     @ObservedObject private var authSession = AuthSession.shared
-    @State private var similarProducts: [Product] = []
-    @State private var isLoadingSimilar = true
+    
     private let imageHeight: CGFloat = 340
     
-    @State private var productReviews: [ProductReview] = []
-    @State private var isLoadingReviews = true
-    @State private var isShowingWriteReviewSheet = false
-    @State private var isShowingGuestAlert = false
-    @State private var isReviewsExpanded = false
-    
-    // Registry Add Workflow
-    @State private var isShowingRegistrySheet = false
-    @State private var showingToast = false
-    @State private var toastMessage = ""
-    
-    private var averageRating: Double {
-        guard !productReviews.isEmpty else { return 0.0 }
-        let sum = productReviews.reduce(0) { $0 + $1.rating }
-        return Double(sum) / Double(productReviews.count)
-    }
-    
-    private var sortedReviews: [ProductReview] {
-        guard let currentUser = authSession.currentUser else { return productReviews }
-        let currentUserName = (currentUser.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
-        let currentUserEmail = currentUser.email.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_").lowercased()
-        
-        return productReviews.sorted { a, b in
-            let aIsCurrent = (a.userId.lowercased() == currentUserName || a.userId.lowercased() == currentUserEmail)
-            let bIsCurrent = (b.userId.lowercased() == currentUserName || b.userId.lowercased() == currentUserEmail)
-            if aIsCurrent && !bIsCurrent {
-                return true
-            } else if !aIsCurrent && bIsCurrent {
-                return false
-            }
-            return false
-        }
-    }
-    
-    private func percentage(forStars stars: Int) -> Double {
-        guard !productReviews.isEmpty else { return 0.0 }
-        let count = productReviews.filter { $0.rating == stars }.count
-        return Double(count) / Double(productReviews.count)
-    }
-    
-    private func shareProduct() {
-        let text = "Check out this amazing product: \(product.name) on our store!"
-        let url = URL(string: "https://ecommerce.example.com/products/\(product.id)") ?? URL(string: "https://ecommerce.example.com")!
-        
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first?.rootViewController {
-            
-            var topVC = rootVC
-            while let presented = topVC.presentedViewController {
-                topVC = presented
-            }
-            
-            let activityVC = UIActivityViewController(activityItems: [text, url], applicationActivities: nil)
-            
-            // iPad popover presentation compatibility
-            if let popover = activityVC.popoverPresentationController {
-                popover.sourceView = topVC.view
-                popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
-                popover.permittedArrowDirections = []
-            }
-            
-            topVC.present(activityVC, animated: true, completion: nil)
-        }
+    init(product: Product, showCloseButton: Bool = false) {
+        self.product = product
+        self.showCloseButton = showCloseButton
+        _viewModel = StateObject(wrappedValue: ProductDetailViewModel(product: product))
     }
     
     var quantityInCart: Int {
@@ -114,7 +58,7 @@ struct ProductDetailView: View {
                             Button(action: {
                                 let generator = UIImpactFeedbackGenerator(style: .medium)
                                 generator.impactOccurred()
-                                shareProduct()
+                                viewModel.shareProduct(sourceView: nil)
                             }) {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 20, weight: .semibold))
@@ -216,7 +160,7 @@ struct ProductDetailView: View {
                     reviewsSection
                     
                     // MARK: — Suggested Matches Carousel
-                    if isLoadingSimilar {
+                    if viewModel.isLoadingSimilar {
                         Divider().padding(.top, 4)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 6) {
@@ -238,7 +182,7 @@ struct ProductDetailView: View {
                                 }
                             }
                         }
-                    } else if !similarProducts.isEmpty {
+                    } else if !viewModel.similarProducts.isEmpty {
                         Divider()
                             .padding(.top, 4)
                         
@@ -252,7 +196,7 @@ struct ProductDetailView: View {
                             
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 14) {
-                                    ForEach(similarProducts) { recProduct in
+                                    ForEach(viewModel.similarProducts) { recProduct in
                                         NavigationLink(destination: ProductDetailView(product: recProduct)) {
                                             VStack(alignment: .leading, spacing: 0) {
                                                 ZStack(alignment: .topLeading) {
@@ -320,12 +264,12 @@ struct ProductDetailView: View {
         .overlay(
             VStack {
                 Spacer()
-                if showingToast {
+                if viewModel.showingToast {
                     VStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 32))
                             .foregroundColor(.white)
-                        Text(toastMessage)
+                        Text(viewModel.toastMessage)
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(.white)
                             .multilineTextAlignment(.center)
@@ -340,7 +284,7 @@ struct ProductDetailView: View {
                     .padding(.bottom, 120)
                 }
             }
-            .animation(.spring(), value: showingToast)
+            .animation(.spring(), value: viewModel.showingToast)
         )
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .tabBar)
@@ -377,50 +321,26 @@ struct ProductDetailView: View {
             }
         }
         .task {
-            let results = await recoEngine.fetchSimilarProducts(to: product)
-            await MainActor.run {
-                self.similarProducts = results
-                self.isLoadingSimilar = false
-            }
-            
-            do {
-                let fetchedReviews = try await APIService.shared.fetchReviews(productId: product.id)
-                await MainActor.run {
-                    self.productReviews = fetchedReviews
-                    self.isLoadingReviews = false
-                }
-            } catch {
-                print("Failed to fetch reviews: \(error)")
-                await MainActor.run {
-                    self.isLoadingReviews = false
-                }
-            }
+            await viewModel.fetchInitialData()
         }
-        .sheet(isPresented: $isShowingWriteReviewSheet) {
+        .sheet(isPresented: $viewModel.isShowingWriteReviewSheet) {
             WriteReviewSheet(productId: product.id) {
                 Task {
-                    do {
-                        let updated = try await APIService.shared.fetchReviews(productId: product.id)
-                        await MainActor.run {
-                            self.productReviews = updated
-                        }
-                    } catch {
-                        print("Failed to refresh reviews: \(error)")
-                    }
+                    await viewModel.fetchReviews()
                 }
             }
         }
-        .alert("Authentication Required", isPresented: $isShowingGuestAlert) {
+        .alert("Authentication Required", isPresented: $viewModel.isShowingGuestAlert) {
             Button("OK", role: .cancel) { }
         } message: {
             Text("Please login first to proceed.")
         }
-        .sheet(isPresented: $isShowingRegistrySheet) {
+        .sheet(isPresented: $viewModel.isShowingRegistrySheet) {
             AddToRegistrySheet(product: product) { successMsg in
-                toastMessage = successMsg
-                withAnimation { showingToast = true }
+                viewModel.toastMessage = successMsg
+                withAnimation { viewModel.showingToast = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    withAnimation { showingToast = false }
+                    withAnimation { viewModel.showingToast = false }
                 }
             }
         }
@@ -479,9 +399,9 @@ struct ProductDetailView: View {
                     let impact = UIImpactFeedbackGenerator(style: .medium)
                     impact.impactOccurred()
                     if authSession.currentUser != nil {
-                        isShowingRegistrySheet = true
+                        viewModel.isShowingRegistrySheet = true
                     } else {
-                        isShowingGuestAlert = true
+                        viewModel.isShowingGuestAlert = true
                     }
                 }) {
                     ZStack {
@@ -587,7 +507,7 @@ struct ProductDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             Divider().padding(.vertical, 8)
             
-            if isLoadingReviews {
+            if viewModel.isLoadingReviews {
                 HStack {
                     Spacer()
                     ProgressView("Loading reviews...")
@@ -596,7 +516,7 @@ struct ProductDetailView: View {
                     Spacer()
                 }
                 .padding(.vertical, 20)
-            } else if productReviews.isEmpty {
+            } else if viewModel.productReviews.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Customer Reviews")
@@ -605,9 +525,9 @@ struct ProductDetailView: View {
                         Spacer()
                         Button(action: {
                             if authSession.currentUser != nil {
-                                isShowingWriteReviewSheet = true
+                                viewModel.isShowingWriteReviewSheet = true
                             } else {
-                                isShowingGuestAlert = true
+                                viewModel.isShowingGuestAlert = true
                             }
                         }) {
                             HStack(spacing: 4) {
@@ -641,10 +561,10 @@ struct ProductDetailView: View {
                                 Image(systemName: "star.fill")
                                     .foregroundColor(.primary)
                                     .font(.caption)
-                                Text(String(format: "%.1f", averageRating))
+                                Text(String(format: "%.1f", viewModel.averageRating))
                                     .font(.caption)
                                     .fontWeight(.semibold)
-                                Text("(\(productReviews.count))")
+                                Text("(\(viewModel.productReviews.count))")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -654,9 +574,9 @@ struct ProductDetailView: View {
                         HStack(spacing: 12) {
                             Button(action: {
                                 if authSession.currentUser != nil {
-                                    isShowingWriteReviewSheet = true
+                                    viewModel.isShowingWriteReviewSheet = true
                                 } else {
-                                    isShowingGuestAlert = true
+                                    viewModel.isShowingGuestAlert = true
                                 }
                             }) {
                                 HStack(spacing: 4) {
@@ -674,10 +594,10 @@ struct ProductDetailView: View {
                             
                             Button(action: {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    isReviewsExpanded.toggle()
+                                    viewModel.isReviewsExpanded.toggle()
                                 }
                             }) {
-                                Image(systemName: isReviewsExpanded ? "chevron.up" : "chevron.right")
+                                Image(systemName: viewModel.isReviewsExpanded ? "chevron.up" : "chevron.right")
                                     .font(.subheadline)
                                     .fontWeight(.bold)
                                     .foregroundColor(.secondary)
@@ -689,13 +609,13 @@ struct ProductDetailView: View {
                         }
                     }
                     
-                    if isReviewsExpanded {
+                    if viewModel.isReviewsExpanded {
                         VStack(spacing: 6) {
-                            ratingRow(stars: 5, percentage: percentage(forStars: 5))
-                            ratingRow(stars: 4, percentage: percentage(forStars: 4))
-                            ratingRow(stars: 3, percentage: percentage(forStars: 3))
-                            ratingRow(stars: 2, percentage: percentage(forStars: 2))
-                            ratingRow(stars: 1, percentage: percentage(forStars: 1))
+                            ratingRow(stars: 5, percentage: viewModel.percentage(forStars: 5))
+                            ratingRow(stars: 4, percentage: viewModel.percentage(forStars: 4))
+                            ratingRow(stars: 3, percentage: viewModel.percentage(forStars: 3))
+                            ratingRow(stars: 2, percentage: viewModel.percentage(forStars: 2))
+                            ratingRow(stars: 1, percentage: viewModel.percentage(forStars: 1))
                         }
                         .padding(.top, 4)
                     }

@@ -1,0 +1,406 @@
+ShopEase — Technical Deep Dive
+A detailed breakdown of every technology, pattern, and system used across the full stack.
+
+Table of Contents
+	•	iOS Frontend
+	•	Backend Architecture
+	•	Database — Supabase PostgreSQL
+	•	Authentication — Supabase Auth
+	•	AI Search Pipeline
+	•	Semantic Search & Embeddings
+	•	Ranking Engine — 9 Signal Scoring
+	•	Personalization Engine
+	•	Caching Layer — Redis + LRU
+	•	AI Chat — LLM Proxy with Fallback Chain
+	•	AI Presence System
+	•	Visual Search
+	•	Payments — Razorpay
+	•	Registry System
+	•	Media Storage — Cloudinary
+	•	Hosting — Render
+
+1. iOS Frontend
+SwiftUI + MVVM
+The entire iOS app is built with SwiftUI, Apple's declarative UI framework. Every screen is a View struct that reacts to state changes automatically — no manual UI updates or reloadData() calls. The architecture is strict MVVM (Model-View-ViewModel):
+	•	Models — plain Codable Swift structs that map 1:1 to backend JSON (Product, Registry, RegistryItem, ChatMessage, Address, etc.)
+	•	ViewModels — ObservableObject classes that own all business logic, API calls, and state. Views only read from them via @ObservedObject or @StateObject.
+	•	Views — pure presentation. They call ViewModel methods on user actions and render whatever the ViewModel publishes.
+This means views are completely dumb — ProductDetailView never touches a URL. It binds to ProductViewModel and calls viewModel.addToCart().
+Environment Objects
+Three global singletons are injected at the app root via @EnvironmentObject and available anywhere in the tree without prop-drilling:
+	•	CartManager — owns the cart items array, promo codes, and discount state
+	•	AuthSession — owns the logged-in user and JWT token
+	•	AIPresenceManager — owns the floating AI button's state and hint messages
+This means a deeply nested button in CheckoutSheetView can fire cartManager.clearCart() without that reference being passed down 5 layers of views.
+Notification-Based Decoupled Navigation
+SwiftUI's standard navigation doesn't handle cross-tab or app-level events well. ShopEase solves this with NotificationCenter:
+	•	.goToShopTab — fired from chat or recommendations to jump to the Shop tab
+	•	.requireAuth — fired from any gated action to trigger the login flow
+	•	.openRegistryToken — fired from deep links to open a shared registry
+	•	.userDidLogout — fired from profile to reset the entire app to the onboarding state
+	•	.addedToCart — fires a toast notification when something is added to cart
+This fully decouples components — the registry can trigger navigation without knowing ContentView exists.
+Local Persistence
+	•	Cart — serialized to UserDefaults via JSONEncoder. On launch, the local cart is loaded first (instant UX), then synced with the backend in the background.
+	•	Auth session — user object and JWT access token stored in UserDefaults.
+	•	Recently viewed products — last 10 products stored in UserDefaults, used as personalization signals sent to the backend.
+	•	Device ID — a UUID generated once and stored permanently. Used for anonymous personalization and search history before any login.
+	•	Chat history — persisted across sessions so conversations are not lost.
+Async Networking
+All network calls use Swift's native async/await with URLSession.shared.data(for:). Every API call is wrapped in do/catch and updates @Published properties on the @MainActor to ensure UI updates happen on the main thread. No third-party networking library is used.
+Image Caching — CachedImageView
+A custom CachedImageView component handles image loading. It uses an NSCache (in-memory) keyed by URL to avoid re-downloading the same image. On cache miss it fetches async and updates the view once data arrives. This prevents the flickering common in naive AsyncImage usage.
+
+2. Backend Architecture
+Express.js 5
+The backend is Node.js with Express 5 (the latest major version, which has native async error propagation — thrown errors in async route handlers are automatically forwarded to error middleware without needing try/catch wrapping at the route level).
+Middleware Stack
+Every request passes through in this order:
+	•	CORS — allows requests from any origin (required since the iOS app hits the API directly)
+	•	JSON body parser — 10MB limit to support base64-encoded images for visual search
+	•	Rate limiter — applied only to /ai routes: 100 requests per minute per IP using express-rate-limit. IP is read from x-forwarded-for header (important for Render's proxy environment)
+	•	Request ID injector — attaches a unique req_<timestamp>_<random> to every request and returns it as X-Request-Id header. Useful for correlating logs.
+Route Modules
+Each feature domain is its own Express Router module, mounted at a prefix in server.js. This keeps route files focused and independently testable:
+/products   → routes/products.js
+/cart       → routes/cart.js
+/orders     → routes/orders.js
+/payment    → routes/payment.js
+/auth       → routes/auth.js
+/ai         → routes/ai.js          (search, recommendations, visual search)
+/ai/presence→ routes/ai_presence.js (floating AI hint bubbles)
+/ai/registry→ routes/ai_registry.js (AI-powered registry suggestions)
+/registry   → routes/registry.js    (full registry CRUD)
+/chat       → routes/chat.js        (LLM proxy + misc features)
+/reviews    → routes/reviews.js
+/users      → routes/address.js
+Startup Migration Check
+On every server start, server.js calls a Supabase RPC add_column_if_not_exists to ensure the orders table has columns like items_summary, image_url, and payment_id. This is a lightweight safety net to handle schema drift between environments without requiring manual migration runs.
+
+3. Database — Supabase PostgreSQL
+Supabase is a Firebase alternative built on top of PostgreSQL. ShopEase uses it for both the database and authentication.
+Why Supabase over Raw PostgreSQL
+Supabase provides:
+	•	A hosted PostgreSQL instance with a REST API auto-generated from the schema (PostgREST)
+	•	A JavaScript client (@supabase/supabase-js) that wraps all queries in a fluent builder
+	•	Row Level Security (RLS) policies at the DB level
+	•	Real-time subscriptions (not used here but available)
+	•	Auth built in (see section 4)
+Key Tables
+	•	products — catalog with name, price, category, tags, description, stock, image_url, color data, and a embedding vector column for semantic search
+	•	users — mirrors Supabase Auth users with id, email, name
+	•	cart_items — user_id + product_id + quantity with upsert logic (increment on re-add)
+	•	orders — user_id, total, items_summary, payment_id, status
+	•	save_for_later — device_id + product_id (works for guests)
+	•	registries — event_type, event_date, budget, share_token, theme, is_public
+	•	registry_items — registry_id, product_id, quantity_requested, quantity_received, is_most_wanted, is_group_gift, price_snapshot
+	•	registry_contributions — contributor_name, amount, message, is_anonymous
+	•	recent_searches — device_id + query + created_at
+	•	search_analytics — query, result_count, latency_ms, source (cache/semantic/keyword/fuzzy)
+	•	user_events — device_id, product_id, event_type (view/add_to_cart/purchase)
+	•	reviews — product_id, user_id, rating, body
+	•	returns, watchlist, deals, promotions, user_points, chatbot_feedback
+pgvector — Vector Storage
+The products table has an embedding column of type vector(384). This is powered by the pgvector Postgres extension, which allows storing and querying high-dimensional float arrays. Supabase ships pgvector by default. This column stores the pre-computed sentence embedding for each product, enabling fast cosine similarity queries.
+hybrid_search RPC
+A custom Postgres function hybrid_search is called for semantic search. It takes a query_text (for keyword matching) and a query_embedding (384-dim vector), runs both a full-text search and a vector similarity search, and returns a merged, ranked result set. This is why Supabase is used instead of a plain database — this kind of function benefits from being co-located with the data.
+Supabase JS Client
+The backend uses @supabase/supabase-js with the service_role key (bypasses RLS, used server-side only). The client is instantiated once in supabaseClient.js and imported by every route module. Queries use the fluent builder:
+const { data, error } = await supabase
+    .from('cart_items')
+    .select('*, products(*)')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+This compiles to a PostgREST query under the hood — no raw SQL in route files.
+
+4. Authentication — Supabase Auth
+Flow
+	•	User submits email + password on iOS
+	•	iOS calls POST /auth/signup or POST /auth/login on the Express backend
+	•	Backend calls Supabase Auth (supabase.auth.signUp or supabase.auth.signInWithPassword)
+	•	Supabase returns a JWT access_token and user object
+	•	Backend upserts the user into the public users table (to satisfy foreign key constraints on cart_items, orders, etc.)
+	•	Backend returns the user object + token to iOS
+	•	iOS stores both in UserDefaults via AuthSession
+	•	All subsequent authenticated requests include the token (currently used client-side for identity; backend uses service_role key for all DB access)
+Email Confirmation Handling
+Supabase by default requires email confirmation before a session is issued. The signup route handles this gracefully:
+	•	If a session is returned immediately (confirmation disabled) → return token directly
+	•	If confirmation is required → attempt an immediate sign-in anyway (in case the user already confirmed)
+	•	If that also fails → create the user record in public.users anyway and return access_token: null with an explanatory message
+Token Persistence on iOS
+AuthSession is an ObservableObject singleton. On init it loads the user and token from UserDefaults. The CartManager observes AuthSession.$currentUser via Combine's sink — when a user logs in, the local cart is automatically synced to the backend.
+
+5. AI Search Pipeline
+This is the most technically sophisticated part of the project. Located in Backend/services/search/, it is a modular 11-stage pipeline orchestrated by searchOrchestrator.js.
+Stage by Stage
+Stage 0 — Dictionary Init On the first search request, all product names, categories, and tags are fetched from Supabase and loaded into the spell correction dictionary. Subsequent requests skip this.
+Stage 1 — Normalize Lowercases, trims whitespace, removes special characters, and deduplicates spaces. Returns empty if nothing meaningful remains.
+Stage 2 — Cache Check Builds a cache key from query:page:category:maxPrice:tags. Hits the Redis/LRU cache. On a hit, still runs personalization boost (so cached results are still user-specific) before returning.
+Stage 3 — Query Processing (3 sub-steps)
+	•	Spell Correct — Levenshtein distance against the product dictionary. Finds the closest known term within edit distance 2. "coookware" → "cookware"
+	•	Synonym Expand — maps 40+ user slang terms to catalog terms via a static map. "skillet" → "fry pan", "couch" → "sofa", "espresso" → "coffee"
+	•	Intent Detect — extracts structured intent: category, color, style, room, occasion, budget (max/range/premium/budget keywords). "white ceramic mug under 30" → { color: 'white', style: 'ceramic', product: 'mug', budget: { type: 'max', value: 30 } }
+Stage 4 — Parallel Signal Fetch Uses Promise.all to fetch 4 independent data sources concurrently:
+	•	Trending product IDs + scores (from search_analytics click data)
+	•	Popularity counts (from order history)
+	•	Conversion counts (from search_analytics)
+	•	User behavioral profile (from user_events for this device_id)
+Parallelizing these cuts latency significantly vs sequential fetching.
+Stage 5 — Semantic Search (Primary) Generates a 384-dimensional embedding for the processed query, then calls the hybrid_search Supabase RPC. Returns products ranked by vector cosine similarity.
+Stage 6 — Fallback Chain (if semantic fails or returns nothing) Four tiers tried in order:
+	•	SQL ILIKE keyword search on name + description + category
+	•	Fuzzy Levenshtein matching against all product names
+	•	Tag-based matching against product tags
+	•	Trending products (guaranteed non-empty)
+Stage 7 — Merge + Deduplicate Combines semantic results with fallback results. Deduplicates by product ID. Semantic results preserve their _similarity score for the ranking engine.
+Stage 8 — Adaptive Ranking The 9-signal ranking engine scores and sorts all merged results. See section 7.
+Stage 9 — Personalization Boost A second pass that boosts products matching the user's category/tag affinity profile. See section 8.
+Stage 10 — Pagination + Cleanup Slices results for the requested page, strips internal scoring fields (_score, _debug, _similarity) from the response.
+Stage 11 — Cache Write + Analytics Log Writes results to cache with a 5-minute TTL. Logs query metadata (latency, result count, source, corrected query) to search_analytics for future trending/popularity signals.
+
+6. Semantic Search & Embeddings
+The Model — Xenova/all-MiniLM-L6-v2
+Loaded via @xenova/transformers (a JavaScript port of HuggingFace Transformers). This is a 384-dimensional sentence transformer — a small, fast model that converts text into a dense vector where semantically similar texts produce vectors close together in cosine space.
+The model is loaded once at server startup using a non-blocking IIFE:
+(async () => {
+    const transformers = await import('@xenova/transformers');
+    pipeline = transformers.pipeline;
+    embedderInstance = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    modelReady = true;
+})();
+After this, getEmbedding(text) runs in milliseconds because the model is already in memory.
+Mean Pooling + Normalization
+The model is called with { pooling: 'mean', normalize: true }. This averages the token-level embeddings into a single 384-float vector, then normalizes it to unit length. Unit-normalized vectors allow cosine similarity to be computed as a simple dot product — much faster than the full cosine formula.
+Embedding Cache
+Query embeddings are cached with a 30-minute TTL under key emb:<text>. This means repeated searches for the same query skip the model inference entirely.
+pgvector Similarity
+Product embeddings are pre-computed (by scripts/generate_image_embeddings.js) and stored in the embedding column. At search time, the query embedding is sent to Supabase's hybrid_search RPC, which runs <=> (cosine distance) comparisons against all stored product vectors using pgvector's index. This is orders of magnitude faster than computing distances in Node.js.
+
+7. Ranking Engine — 9 Signal Scoring
+rankingEngine.js implements a weighted linear scoring model that combines 9 independent signals into a single _score float per product. Products are sorted descending by this score.
+The 9 Signals
+Signal
+What it measures
+Default Weight
+Semantic Similarity
+Cosine similarity of query embedding to product embedding
+0.22
+Text Relevance
+Keyword overlap (name = 2x, description = 1x)
+0.15
+Personalization
+Match to user's behavioral category/tag affinity
+0.15
+Stock Availability
+Penalizes low/zero stock (0.1 floor, not hard zero)
+0.10
+Category Match
+Exact match to detected intent category
+0.10
+Trending
+Search + click trend score for this product
+0.08
+Popularity
+Order/purchase count
+0.08
+Conversion
+How often this product gets purchased after appearing in search
+0.07
+Freshness
+Decays from 1.0 → 0.1 over 90 days since created_at
+0.05
+Adaptive Weights
+Weights shift based on context:
+	•	Known user (has behavioral profile) → personalization weight raised from 0.15 to 0.20, popularity/trending reduced. The engine trusts what this user has shown interest in.
+	•	New user (no profile) → personalization drops to 0.02, popularity raised to 0.14, trending to 0.14. Falls back on crowd wisdom.
+	•	Strong category intent detected → categoryMatch raised to 0.15, freshness reduced to 0.02. Precision over recency.
+Intent Bonuses
+On top of the weighted score, these flat bonuses are added:
+	•	+0.08 if product name/description/tags mention the detected color intent
+	•	+0.07 if it mentions the detected style intent
+	•	Tag relevance (Levenshtein token overlap against product tags): +0.05 max
+Budget Multiplier
+If a budget constraint was detected in the query, a multiplier is applied:
+	•	Product exceeds max budget → ×0.3 (heavily penalized but not zeroed out)
+	•	Product outside budget range → ×0.4
+	•	Budget keyword present and product over ₹100 → ×0.5
+	•	Premium keyword and product under ₹50 → ×0.5
+This ensures budget-busting products still appear at the bottom rather than disappearing entirely.
+
+8. Personalization Engine
+personalizationEngine.js builds a behavioral profile per device from Supabase user_events data. It works for anonymous users (no login required) using the device UUID.
+Profile Building
+Fetches up to 50 recent events for a device, categorized as:
+	•	view — product was viewed
+	•	add_to_cart — product was added to cart
+	•	purchase — product was purchased
+For each event, it looks up the product's category and tags. Events are weighted by type:
+	•	Purchase: ×3.0 weight (strongest signal)
+	•	Cart addition: ×2.0
+	•	View: ×1.0
+This builds a categoryAffinity map (e.g. { Cookware: 8.5, Dinnerware: 3.0 }) and a tagAffinity map (e.g. { ceramic: 5.0, 'non-stick': 4.0 }).
+Also computes:
+	•	priceRange.avg — the user's average interaction price point
+	•	recentProductIds — last 20 viewed products (for "more like this" and deduplication)
+	•	purchasedProductIds — already-bought items (can be downranked)
+Profile Caching
+Profiles are cached for 10 minutes per device_id to avoid re-querying user_events on every search.
+Scoring a Product Against a Profile
+scorePersonalization(product, profile) returns 0.0–1.0:
+	•	Category affinity: normalized against the user's max affinity score
+	•	Tag affinity: average tag overlap between product tags and user's tag affinities
+	•	Price proximity: how close the product price is to the user's average price point
+	•	Final score: weighted average of the above three
+
+9. Caching Layer — Redis + LRU
+cacheService.js implements a transparent dual-backend cache. Callers just call get(key) and set(key, value, ttlSeconds) — they don't know or care which backend is active.
+LRU (Always Available)
+lru-cache is an in-memory Least Recently Used cache. Configured with:
+	•	max: 256 — max 256 entries before evicting oldest
+	•	ttl: 5 * 60 * 1000 — 5-minute default TTL
+This is always available with zero latency (in-process memory). Its downside is it's per-process and doesn't survive restarts.
+Redis (Optional, Distributed)
+If REDIS_URL is set, ioredis connects to a Redis instance:
+	•	maxRetriesPerRequest: 2 — doesn't hang forever on Redis issues
+	•	connectTimeout: 3000 — 3s connection timeout
+	•	lazyConnect: true — doesn't block startup if Redis is slow
+On any Redis error, redisReady flips to false and the cache silently degrades to LRU only. The on('error') handler absorbs all errors without crashing the process.
+Write Strategy
+On set(), data is written to both backends simultaneously. This means LRU always has a warm copy, so if Redis goes down mid-session, in-memory hits still work.
+What Gets Cached
+Key Pattern
+TTL
+Content
+search:<query>:<page>:<filters>
+5 min
+Search result arrays
+emb:<text>
+30 min
+384-dim query embedding
+profile:<device_id>
+10 min
+User behavioral profile
+trending:<...>
+10 min
+Trending product IDs + scores
+autocomplete:<...>
+5 min
+Autocomplete suggestion lists
+
+10. AI Chat — LLM Proxy with Fallback Chain
+routes/chat.js implements a triple-fallback LLM proxy so the chat feature never goes down due to a single provider being unavailable.
+Fallback Chain
+Primary — Groq (llama-3.1-8b-instant) Groq is a hardware-accelerated inference provider. llama-3.1-8b-instant delivers responses in under 1 second due to Groq's custom LPU (Language Processing Unit) hardware. If GROQ_API_KEY is not set, this tier is immediately skipped.
+Secondary — Ollama Cloud (custom hosted llama3.2:1b) A self-hosted Ollama instance at a configurable URL. Supports optional X-Custom-Auth header for authentication. Smaller model (1B params) than Groq's but still capable for shopping assistant tasks.
+Tertiary — Google Gemini (gemini-2.0-flash) The final fallback. Gemini 2.0 Flash is fast and capable. Uses the @google/genai SDK with systemInstruction for the shopping assistant persona.
+Message Format Translation
+Each provider uses a different message format. The router translates between them:
+	•	Groq/Ollama: [{ role: 'system', content: '...' }, { role: 'user', content: '...' }]
+	•	Gemini: systemInstruction separate from contents, role: 'model' for assistant turns
+Client-Side Intent Classification
+Before any message hits the backend, ChatIntentRouter.classify() on iOS classifies it into one of ~30 intents. Many intents are handled entirely on the client without a network call:
+	•	browseCategory — filters local productViewModel.products
+	•	budgetSearch — filters local products by price
+	•	viewCart — reads from CartManager directly
+	•	sustainabilityFilter — keyword matches on local product descriptions
+Only truly generative intents (fallback, productQA, giftAdvisor, etc.) hit the backend LLM.
+Context Window Management
+The ChatViewModel maintains a conversationHistory array that is sent with every request. This gives the LLM memory of the conversation. The history is also persisted to UserDefaults so it survives app restarts.
+
+11. AI Presence System
+The floating AI button in the bottom-right corner is powered by the AIPresenceManager + /ai/presence/hint endpoint.
+How It Works
+	•	On tab change or product view, iOS calls POST /ai/presence/hint with context: { context: 'product_detail', product_name: 'Cast Iron Skillet', cart_count: 2 }
+	•	The backend tries to generate a Gemini response: a single hint message under 7 words that feels like the AI is actively working
+	•	A 6-second timeout is enforced via Promise.race. If Gemini is slow, it immediately falls back to a hardcoded local pool.
+	•	The hint is shown in a bubble above the AI button, cycling through messages on a timer.
+Local Fallback Pools
+8 context-specific pools are hardcoded on both the server (for the API fallback) and on iOS (for when the network itself is unavailable). Examples:
+	•	product_detail: "✦ Reading reviews for this", "✦ I have thoughts on this"
+	•	cart_has_items: "✦ Optimizing your cart", "✦ Nice picks — found a bundle 👀"
+	•	registry: "✦ Building your perfect registry"
+Gemini Health Check
+On app launch, AIPresenceManager calls GET /ai/presence/health which returns { gemini: true/false }. iOS uses this to show/hide certain AI-dependent UI elements.
+
+12. Visual Search
+Visual search lets users point their camera at an object or photo and find similar products. It combines Apple's Vision framework (on-device) with CLIP-based image similarity (on the server).
+iOS Side — Apple Vision
+VisualSearchViewModel runs VNClassifyImageRequest from Apple's Vision framework. This runs a CoreML classification model on-device — no network round-trip. It produces a ranked list of (label, confidence) pairs, e.g. [("frying pan", 0.92), ("cooking", 0.78), ("kitchen", 0.65)].
+A custom updatedModel.mlmodel CoreML model is bundled into the app for this classification task.
+Multi-region color extraction is also done on-device: the captured image is divided into regions and the dominant color of each region is sampled, producing up to 3 unique color descriptors that are sent to the backend for aesthetic mode filtering.
+Search Modes
+	•	Object mode — finds products matching the classified object (e.g. "frying pan" → shows all pans)
+	•	Aesthetic mode — uses the extracted color palette to find products with a matching aesthetic, filtered through the color family system on the backend
+Payload to Backend
+The iOS app sends a JSON payload to POST /ai/visual-search:
+	•	vision_labels — the full label + confidence array from Vision framework
+	•	top_label — the primary classification
+	•	base64_image — the captured image compressed to JPEG at 0.5 quality and base64-encoded (for CLIP server-side similarity)
+	•	mode — "object" or "aesthetic"
+	•	dominant_colors — extracted color strings
+Backend Side — CLIP Image Similarity
+The backend receives the base64 image, decodes it, and runs it through a CLIP embedding model via @xenova/transformers. CLIP (Contrastive Language-Image Pretraining) produces image embeddings in the same vector space as text embeddings. This means a photo of a cast iron skillet produces a vector close to the text embedding for "cast iron skillet" — enabling cross-modal similarity search.
+The image embedding is compared against pre-computed product image embeddings in the database, returning products whose images are visually similar.
+Aesthetic Color Filtering
+In aesthetic mode, the backend applies a hard color gate using 4 color families (neutrals, warm, cool, bold). Products whose color attributes don't overlap with the detected palette are filtered out. Neutrals are always allowed alongside any palette. This ensures color-coherent results.
+Feedback Loop
+Users can give thumbs up/down on visual search results. This feedback is stored in visual_search_feedback and can be used to improve future rankings.
+
+13. Payments — Razorpay
+Razorpay is India's leading payment gateway. The integration covers both order creation and payment verification.
+Flow
+	•	iOS calls POST /payment/create-order with { amount: 499.0 }
+	•	Backend creates a Razorpay order via the Razorpay Node SDK: razorpayInstance.orders.create({ amount: 49900, currency: 'INR', receipt: '...' }). Note: amount is in paise (smallest INR unit), so ₹499 = 49900 paise.
+	•	Razorpay returns an order_id
+	•	iOS opens RazorpayCheckoutView — a WKWebView that renders Razorpay's hosted checkout page with the order_id, prefilled user details, and the Razorpay public key
+	•	On payment success, Razorpay returns { razorpay_order_id, razorpay_payment_id, razorpay_signature }
+	•	iOS sends these three values to POST /payment/verify
+	•	Backend verifies the signature: HMAC-SHA256(order_id + "|" + payment_id, RAZORPAY_KEY_SECRET) and compares against the received signature
+	•	If signature matches → payment is genuine → iOS places the order via POST /orders
+Security
+The RAZORPAY_KEY_SECRET never leaves the backend. The iOS app only holds the public RAZORPAY_KEY_ID. The HMAC verification on the backend is the only way to confirm a payment is real — it cannot be faked without the secret key.
+
+14. Registry System
+The registry is a full-featured gift registry system (wedding, baby shower, birthday, etc.).
+Data Model
+	•	Registry — one per event. Has event_type, event_date, location, budget, theme (for UI styling), a share_token (UUID for public sharing), and is_public flag.
+	•	Registry Items — products added to the registry with quantity_requested, quantity_received, price_snapshot (price at time of adding, so price changes don't break the registry), is_most_wanted, and is_group_gift flags.
+	•	Contributions — guests can contribute partial amounts toward group gifts. Tracked with contributor name, amount, message, and optional anonymity.
+	•	Collaborators — multiple users can co-manage a registry.
+Dashboard Aggregation
+buildDashboard(registryId) is a backend function that assembles the full registry state in one call:
+	•	Fetches the registry, all items (with joined product data), and all contributions
+	•	Computes stats: total items, purchased count, pending count, budget used/remaining, completion percentage, days until event
+	•	For each item: sums contributions, determines if fully funded
+This aggregation happens on the backend rather than the client to minimize round-trips.
+Sharing via Deep Links
+Each registry has a share_token (UUID). The share URL is https://ecommerce-ios.onrender.com/r/<token>. When opened on iOS via onOpenURL, the app parses the token and fires .openRegistryToken notification. The app then navigates to RegistryGuestLandingView which shows a guest-friendly view of the registry.
+AI Registry Suggestions
+routes/ai_registry.js uses Gemini to suggest products for a registry based on event type, budget, and theme. The AI returns structured JSON arrays of product IDs and reasons, which are rendered with ai_reason labels ("Perfect for a kitchen starter set") in the registry UI.
+
+15. Media Storage — Cloudinary
+Product images are stored and served via Cloudinary, a cloud-based media management platform.
+Cloudinary provides:
+	•	CDN delivery — images are served from edge nodes close to the user
+	•	On-the-fly transformations — width, height, quality, format can be specified in the URL (e.g. /w_300,q_auto,f_auto/ serves a 300px wide WebP automatically)
+	•	Automatic format selection — serves WebP to browsers/clients that support it, JPEG as fallback
+	•	Lazy upload via signed URLs or direct API upload
+Product image_url fields in the database contain full Cloudinary URLs. The iOS CachedImageView loads these directly. No image processing happens on the Express backend — Cloudinary handles all transformations and delivery.
+
+16. Hosting — Render
+The backend is hosted on Render, a modern cloud hosting platform for web services.
+render.yaml
+The repo includes a render.yaml that declaratively defines the service:
+	•	Build command: npm install
+	•	Start command: node server.js
+	•	Environment: Node.js
+All secrets (Supabase keys, Razorpay, Gemini, Groq) are set in the Render dashboard environment variables panel — never committed to the repo.
+Free Tier Cold Starts
+On Render's free tier, the service spins down after 15 minutes of inactivity. The first request after a cold start can take 30–60 seconds while the container boots and Node.js initializes (including loading the Xenova/all-MiniLM-L6-v2 embedding model). The iOS app handles this gracefully with a 60-second timeoutInterval on the products fetch.
+Production Considerations
+For production use:
+	•	Upgrade to a paid Render instance to eliminate cold starts
+	•	Add a Redis instance (Render offers managed Redis) to make the cache distributed and persistent across restarts
+	•	Enable Render's health check on /health for automatic restart on crash
+

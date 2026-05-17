@@ -1,15 +1,27 @@
 import Foundation
 
+/// Represents a user's curated wishlist or gift registry.
+/// Maps to the `registries` table in Supabase.
 struct Registry: Codable, Identifiable {
+    /// Unique UUID of the registry.
     let id: String
+    /// UUID of the user who owns this registry.
     let userId: String
+    /// The classification of the event (e.g., Wedding, Housewarming).
     let eventType: String
+    /// The date the event is taking place (ISO 8601 format).
     let eventDate: String
+    /// The physical or virtual location of the event.
     let eventLocation: String?
+    /// Whether this registry can be searched publicly by guests.
     let isPublic: Bool
+    /// Timestamp of when the registry was created.
     let createdAt: String?
+    /// A unique short alphanumeric token used for shareable URLs.
     let shareToken: String?
+    /// Custom styling theme applied to the registry page.
     let theme: String?
+    /// Target monetary budget (if applicable) for the entire registry.
     let budget: Double?
     
     enum CodingKeys: String, CodingKey {
@@ -40,18 +52,32 @@ struct Registry: Codable, Identifiable {
     }
 }
 
+/// A specific product added to a registry, tracking requested vs. fulfilled quantities.
+/// Maps to the `registry_items` table in Supabase.
 struct RegistryItem: Codable, Identifiable {
+    /// Unique UUID of the registry item.
     let id: String
+    /// UUID of the parent registry this item belongs to.
     let registryId: String
+    /// ID of the product linked to this item.
     let productId: Int
+    /// Number of units requested by the registry owner.
     let quantityRequested: Int
+    /// Number of units already purchased by guests.
     var quantityReceived: Int
+    /// Flag indicating if the owner marked this as a top priority item.
     var isMostWanted: Bool
+    /// Flag indicating if guests can contribute partial funds toward this item.
     var isGroupGift: Bool?
+    /// The nested Product details (joined via Supabase relations).
     let products: Product?
+    /// The AI's contextual reasoning for suggesting this item be added.
     let aiReason: String?
+    /// The total monetary amount contributed towards this item (for group gifts).
     let totalContributed: Double?
+    /// Evaluated boolean indicating if total contributions match the item's total cost.
     let isFullyFunded: Bool?
+    /// Array of individual guest contributions toward this group gift.
     let contributions: [RegistryContribution]?
     
     enum CodingKeys: String, CodingKey {

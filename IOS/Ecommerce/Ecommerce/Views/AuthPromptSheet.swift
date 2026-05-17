@@ -192,10 +192,7 @@ private struct EmbeddedLoginView: View {
     let onSuccess: () -> Void
     let onBack:    () -> Void
 
-    @State private var email    = ""
-    @State private var password = ""
-    @State private var isLoading = false
-    @State private var errorMessage: String? = nil
+    @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focused: LoginField?
 
     enum LoginField { case email, password }
@@ -215,23 +212,23 @@ private struct EmbeddedLoginView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 28)
 
-                // Shop Ease brand mark
+                // ShopEase brand mark
                 ShopEaseAuthHeader(headline: "Welcome back", subhead: "Sign in to continue")
                     .padding(.bottom, 28)
 
                 // Fields
                 VStack(spacing: 14) {
-                    ShopEaseInputField(placeholder: "Email", text: $email, icon: "envelope", isSecure: false)
+                    ShopEaseInputField(placeholder: "Email", text: $viewModel.email, icon: "envelope", isSecure: false)
                         .focused($focused, equals: .email)
                         .submitLabel(.next)
                         .onSubmit { focused = .password }
 
-                    ShopEaseInputField(placeholder: "Password", text: $password, icon: "lock", isSecure: true)
+                    ShopEaseInputField(placeholder: "Password", text: $viewModel.password, icon: "lock", isSecure: true)
                         .focused($focused, equals: .password)
                         .submitLabel(.done)
                         .onSubmit { attempt() }
 
-                    if let err = errorMessage {
+                    if let err = viewModel.errorMessage {
                         Text(err).font(.caption).foregroundColor(.red).padding(.horizontal, 4)
                     }
                 }
@@ -241,7 +238,7 @@ private struct EmbeddedLoginView: View {
                 // CTA
                 Button(action: attempt) {
                     ZStack {
-                        if isLoading { ProgressView().tint(.white) }
+                        if viewModel.isLoading { ProgressView().tint(.white) }
                         else { Text("Log In").font(.headline).foregroundColor(.white) }
                     }
                     .frame(maxWidth: .infinity)
@@ -249,7 +246,7 @@ private struct EmbeddedLoginView: View {
                     .background(Color.black)
                     .cornerRadius(14)
                 }
-                .disabled(isLoading)
+                .disabled(viewModel.isLoading)
                 .padding(.bottom, 32)
             }
             .padding(.horizontal, 24)
@@ -257,19 +254,8 @@ private struct EmbeddedLoginView: View {
     }
 
     private func attempt() {
-        focused = nil; errorMessage = nil
-        guard !email.isEmpty, !password.isEmpty else { errorMessage = "Please fill in all fields."; return }
-        isLoading = true
-        Task {
-            do {
-                _ = try await AuthService.shared.login(email: email, password: password)
-                // Migrate guest data after login
-                await GuestDataMigrator.migrate()
-                await MainActor.run { isLoading = false; onSuccess() }
-            } catch {
-                await MainActor.run { isLoading = false; errorMessage = error.localizedDescription }
-            }
-        }
+        focused = nil
+        viewModel.attemptLogin(onSuccess: onSuccess)
     }
 }
 
@@ -279,12 +265,7 @@ private struct EmbeddedSignUpView: View {
     let onSuccess: () -> Void
     let onBack:    () -> Void
 
-    @State private var name            = ""
-    @State private var email           = ""
-    @State private var password        = ""
-    @State private var confirmPassword = ""
-    @State private var isLoading       = false
-    @State private var errorMessage: String? = nil
+    @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focused: SignUpField?
 
     enum SignUpField { case name, email, password, confirm }
@@ -303,20 +284,20 @@ private struct EmbeddedSignUpView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 28)
 
-                ShopEaseAuthHeader(headline: "Create account", subhead: "Join Shop Ease — it's free")
+                ShopEaseAuthHeader(headline: "Create account", subhead: "Join ShopEase — it's free")
                     .padding(.bottom, 28)
 
                 VStack(spacing: 14) {
-                    ShopEaseInputField(placeholder: "Full Name", text: $name, icon: "person", isSecure: false)
+                    ShopEaseInputField(placeholder: "Full Name", text: $viewModel.name, icon: "person", isSecure: false)
                         .focused($focused, equals: .name).submitLabel(.next).onSubmit { focused = .email }
-                    ShopEaseInputField(placeholder: "Email", text: $email, icon: "envelope", isSecure: false)
+                    ShopEaseInputField(placeholder: "Email", text: $viewModel.email, icon: "envelope", isSecure: false)
                         .focused($focused, equals: .email).submitLabel(.next).onSubmit { focused = .password }
-                    ShopEaseInputField(placeholder: "Password", text: $password, icon: "lock", isSecure: true)
+                    ShopEaseInputField(placeholder: "Password", text: $viewModel.password, icon: "lock", isSecure: true)
                         .focused($focused, equals: .password).submitLabel(.next).onSubmit { focused = .confirm }
-                    ShopEaseInputField(placeholder: "Confirm Password", text: $confirmPassword, icon: "lock.shield", isSecure: true)
+                    ShopEaseInputField(placeholder: "Confirm Password", text: $viewModel.confirmPassword, icon: "lock.shield", isSecure: true)
                         .focused($focused, equals: .confirm).submitLabel(.done).onSubmit { attempt() }
 
-                    if let err = errorMessage {
+                    if let err = viewModel.errorMessage {
                         Text(err).font(.caption).foregroundColor(.red).padding(.horizontal, 4)
                     }
                 }
@@ -325,7 +306,7 @@ private struct EmbeddedSignUpView: View {
 
                 Button(action: attempt) {
                     ZStack {
-                        if isLoading { ProgressView().tint(.white) }
+                        if viewModel.isLoading { ProgressView().tint(.white) }
                         else { Text("Create Account").font(.headline).foregroundColor(.white) }
                     }
                     .frame(maxWidth: .infinity)
@@ -333,7 +314,7 @@ private struct EmbeddedSignUpView: View {
                     .background(Color.black)
                     .cornerRadius(14)
                 }
-                .disabled(isLoading)
+                .disabled(viewModel.isLoading)
                 .padding(.bottom, 32)
             }
             .padding(.horizontal, 24)
@@ -341,30 +322,14 @@ private struct EmbeddedSignUpView: View {
     }
 
     private func attempt() {
-        focused = nil; errorMessage = nil
-        guard !name.isEmpty, !email.isEmpty, !password.isEmpty, !confirmPassword.isEmpty else {
-            errorMessage = "Please fill in all fields."; return
-        }
-        guard email.contains("@") else { errorMessage = "Enter a valid email."; return }
-        guard password.count >= 6 else { errorMessage = "Password must be ≥ 6 characters."; return }
-        guard password == confirmPassword else { errorMessage = "Passwords do not match."; return }
-
-        isLoading = true
-        Task {
-            do {
-                _ = try await AuthService.shared.signUp(name: name, email: email, password: password)
-                await GuestDataMigrator.migrate()
-                await MainActor.run { isLoading = false; onSuccess() }
-            } catch {
-                await MainActor.run { isLoading = false; errorMessage = error.localizedDescription }
-            }
-        }
+        focused = nil
+        viewModel.attemptSignUp(onSuccess: onSuccess)
     }
 }
 
 // MARK: - Shared UI components
 
-/// Compact Shop Ease header used inside the auth sheet.
+/// Compact ShopEase header used inside the auth sheet.
 struct ShopEaseAuthHeader: View {
     let headline: String
     let subhead:  String
@@ -375,7 +340,7 @@ struct ShopEaseAuthHeader: View {
                 Image(systemName: "bag.fill")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(.primary)
-                Text("Shop Ease")
+                Text("ShopEase")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
             }

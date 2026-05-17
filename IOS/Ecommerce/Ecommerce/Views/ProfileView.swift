@@ -65,7 +65,7 @@ struct ProfileView: View {
             // Guest banner — sign in CTA
             if authSession.isGuest {
                 VStack(spacing: 12) {
-                    Text("Sign in to unlock your full Shop Ease experience — order tracking, registries, and more.")
+                    Text("Sign in to unlock your full ShopEase experience — order tracking, registries, and more.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -156,7 +156,7 @@ struct ProfileView: View {
                     .padding(.horizontal)
                 }
                 
-                Text("Shop Ease  •  v1.0.0")
+                Text("ShopEase  •  v1.0.0")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 32)

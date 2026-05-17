@@ -6,10 +6,7 @@ struct LoginView: View {
     var onLoginSuccess: () -> Void
     var onBack: () -> Void
 
-    @State private var email    = ""
-    @State private var password = ""
-    @State private var isLoading = false
-    @State private var errorMessage: String? = nil
+    @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focusedField: Field?
 
     enum Field { case email, password }
@@ -41,7 +38,7 @@ struct LoginView: View {
                     .padding(.top, 60)
                     .padding(.bottom, 40)
 
-                    // Shop Ease logo
+                    // ShopEase logo
                     HStack(spacing: 10) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -51,7 +48,7 @@ struct LoginView: View {
                                 .font(.system(size: 20, weight: .semibold))
                                 .foregroundColor(.white)
                         }
-                        Text("Shop Ease")
+                        Text("ShopEase")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                     }
@@ -70,17 +67,17 @@ struct LoginView: View {
 
                     // Fields
                     VStack(spacing: 16) {
-                        DarkAuthField(placeholder: "Email", text: $email, icon: "envelope", isSecure: false)
+                        DarkAuthField(placeholder: "Email", text: $viewModel.email, icon: "envelope", isSecure: false)
                             .focused($focusedField, equals: .email)
                             .submitLabel(.next)
                             .onSubmit { focusedField = .password }
 
-                        DarkAuthField(placeholder: "Password", text: $password, icon: "lock", isSecure: true)
+                        DarkAuthField(placeholder: "Password", text: $viewModel.password, icon: "lock", isSecure: true)
                             .focused($focusedField, equals: .password)
                             .submitLabel(.done)
                             .onSubmit { attemptLogin() }
 
-                        if let error = errorMessage {
+                        if let error = viewModel.errorMessage {
                             Text(error)
                                 .font(.caption)
                                 .foregroundColor(.red.opacity(0.9))
@@ -92,7 +89,7 @@ struct LoginView: View {
                     // CTA
                     Button(action: attemptLogin) {
                         ZStack {
-                            if isLoading {
+                            if viewModel.isLoading {
                                 ProgressView().tint(.black)
                             } else {
                                 Text("Log In")
@@ -105,7 +102,7 @@ struct LoginView: View {
                         .background(Color.white)
                         .cornerRadius(14)
                     }
-                    .disabled(isLoading)
+                    .disabled(viewModel.isLoading)
                 }
                 .padding(.horizontal, 28)
             }
@@ -113,18 +110,8 @@ struct LoginView: View {
     }
 
     private func attemptLogin() {
-        focusedField = nil; errorMessage = nil
-        guard !email.isEmpty, !password.isEmpty else { errorMessage = "Please fill in all fields."; return }
-        isLoading = true
-        Task {
-            do {
-                _ = try await AuthService.shared.login(email: email, password: password)
-                await GuestDataMigrator.migrate()
-                await MainActor.run { isLoading = false; onLoginSuccess() }
-            } catch {
-                await MainActor.run { isLoading = false; errorMessage = error.localizedDescription }
-            }
-        }
+        focusedField = nil
+        viewModel.attemptLogin(onSuccess: onLoginSuccess)
     }
 }
 

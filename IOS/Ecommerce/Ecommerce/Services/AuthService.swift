@@ -3,18 +3,27 @@ import Combine
 
 // MARK: - Auth Models
 
+/// Represents an authenticated user retrieved from the Supabase backend.
 struct AuthUser: Codable {
+    /// The unique UUID of the user in the database.
     let id: String
+    /// The registered email address.
     let email: String
+    /// The optional full name of the user.
     let name: String?
 }
 
+/// The standard payload returned by the authentication endpoints.
 struct AuthResponse: Codable {
+    /// The user details.
     let user: AuthUser
+    /// The JWT session token used for subsequent API calls.
     let access_token: String?
 }
 
+/// A standard error payload returned by authentication endpoints.
 struct AuthError: Codable {
+    /// The localized error message.
     let error: String
 }
 

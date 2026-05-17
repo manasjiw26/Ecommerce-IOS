@@ -41,11 +41,19 @@ struct SmartBundleOption: Identifiable, Hashable, Codable {
     }
 }
 
+/// Core service responsible for managing the state of a user's registries and caching data fetched from the backend.
+/// Despite the "Mock" prefix (a legacy name from prototyping), this service now performs LIVE API calls via `RegistryService.shared`.
 class MockRegistryService: ObservableObject {
+    /// Singleton instance for global access.
     static let shared = MockRegistryService()
     
+    /// The current user's list of registries (both owned and collaborated).
     @Published var registries: [MockRegistryExtended] = []
+    
+    /// A dictionary mapping `registryId` to an array of its contained `RegistryItem`s.
     @Published var registryItems: [String: [RegistryItem]] = [:]
+    
+    /// Dynamic starter bundle suggestions fetched from the AI/Backend engine based on event type.
     @Published var starterBundles: [SmartBundleOption] = []
     
     private init() {

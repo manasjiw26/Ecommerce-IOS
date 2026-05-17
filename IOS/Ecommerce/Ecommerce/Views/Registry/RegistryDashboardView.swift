@@ -1,31 +1,15 @@
 import SwiftUI
 
 struct RegistryDashboardView: View {
-    @State var registry: MockRegistryExtended
-    @ObservedObject private var registryService = MockRegistryService.shared
-    
-    @State private var items: [RegistryItem] = []
-    @State private var showingEditSheet = false
-    @State private var showingAddProductsSheet = false
-    @State private var selectedItemForTagging: RegistryItem? = nil
-    @State private var showShareSheet = false
-    @State private var isLoadingDashboard = false
-    @State private var dashboardLoadingMessage = "Loading registry..."
-    
-    // Toast Alert States
-    @State private var showingToast = false
-    @State private var toastMessage = ""
-    
-    // Swipe Delete Confirmation States
-    @State private var itemToDelete: RegistryItem? = nil
-    @State private var showingItemDeleteConfirmation = false
-    @State private var addingBundleTypes: Set<String> = []
-    @State private var selectedProductForDetail: Product? = nil
-    @State private var selectedItemForContributors: RegistryItem? = nil
+    @StateObject private var viewModel: RegistryDashboardViewModel
     
     @EnvironmentObject var cartManager: CartManager
     @EnvironmentObject var productViewModel: ProductViewModel
     @Environment(\.dismiss) var dismiss
+    
+    init(registry: MockRegistryExtended) {
+        _viewModel = StateObject(wrappedValue: RegistryDashboardViewModel(registry: registry))
+    }
     
     // Native iOS Share Sheet Helper
     func shareText(_ text: String) {
@@ -49,7 +33,7 @@ struct RegistryDashboardView: View {
                 Section {
                     ZStack(alignment: .topTrailing) {
                         ZStack(alignment: .bottomLeading) {
-                            CachedImageView(urlString: registry.bannerImageUrl) { img in
+                            CachedImageView(urlString: viewModel.registry.bannerImageUrl) { img in
                                 img.resizable().scaledToFill()
                             } placeholder: {
                                 Rectangle().fill(Color.gray.opacity(0.1))
@@ -59,21 +43,21 @@ struct RegistryDashboardView: View {
                             .overlay(Color.black.opacity(0.4))
                             
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(registry.type.uppercased())
+                                Text(viewModel.registry.type.uppercased())
                                     .font(.caption)
                                     .fontWeight(.bold)
                                     .foregroundColor(.white.opacity(0.8))
                                     .kerning(1.5)
                                 
-                                Text(registry.name)
+                                Text(viewModel.registry.name)
                                     .font(.title2)
                                     .fontWeight(.bold)
                                     .foregroundColor(.white)
                                 
                                 HStack(spacing: 12) {
-                                    Text(registry.date)
+                                    Text(viewModel.registry.date)
                                     Text("•")
-                                    Text(registry.location)
+                                    Text(viewModel.registry.location)
                                 }
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.9))
@@ -81,7 +65,7 @@ struct RegistryDashboardView: View {
                             .padding(16)
                         }
                         
-                        Button(action: { showingEditSheet = true }) {
+                        Button(action: { viewModel.showingEditSheet = true }) {
                             Image(systemName: "pencil.circle.fill")
                                 .font(.title)
                                 .foregroundColor(.white)
@@ -98,7 +82,7 @@ struct RegistryDashboardView: View {
                 // MARK: - Actions Row (Add Items on the left, Share moved to Top Right Toolbar)
                 Section {
                     HStack {
-                        Button(action: { showingAddProductsSheet = true }) {
+                        Button(action: { viewModel.showingAddProductsSheet = true }) {
                             HStack(spacing: 6) {
                                 Image(systemName: "plus")
                                     .font(.system(size: 12, weight: .bold))
@@ -124,8 +108,8 @@ struct RegistryDashboardView: View {
                 
                 // MARK: - Typographic Stat Box
                 Section {
-                    let fulfilledCount = items.filter { $0.quantityReceived >= $0.quantityRequested && $0.quantityRequested > 0 }.count
-                    let remainingCount = items.filter { $0.quantityReceived < $0.quantityRequested || $0.quantityRequested == 0 }.count
+                    let fulfilledCount = viewModel.items.filter { $0.quantityReceived >= $0.quantityRequested && $0.quantityRequested > 0 }.count
+                    let remainingCount = viewModel.items.filter { $0.quantityReceived < $0.quantityRequested || $0.quantityRequested == 0 }.count
                     
                     HStack(spacing: 0) {
                         VStack(alignment: .leading, spacing: 6) {
@@ -169,7 +153,7 @@ struct RegistryDashboardView: View {
                 
                 // MARK: - Dynamic Smart Starter Bundles based on Event Type
                 Section {
-                    let bundles = registryService.starterBundles.isEmpty ? registryService.getSmartBundlesForEvent(type: registry.type) : registryService.starterBundles
+                    let bundles = MockRegistryService.shared.starterBundles.isEmpty ? MockRegistryService.shared.getSmartBundlesForEvent(type: viewModel.registry.type) : MockRegistryService.shared.starterBundles
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Starter Bundles")
                             .font(.headline)
@@ -178,8 +162,8 @@ struct RegistryDashboardView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 16) {
                                 ForEach(bundles) { bundle in
-                                    let isAdding = addingBundleTypes.contains(bundle.bundleType)
-                                    let isAdded = items.contains { $0.aiReason?.contains("Starter bundle \(bundle.bundleType)") == true }
+                                    let isAdding = viewModel.addingBundleTypes.contains(bundle.bundleType)
+                                    let isAdded = viewModel.items.contains { $0.aiReason?.contains("Starter bundle \(bundle.bundleType)") == true }
                                     
                                     RichBundleCard(
                                         title: bundle.title,
@@ -190,32 +174,32 @@ struct RegistryDashboardView: View {
                                     ) {
                         Task {
                             withAnimation(.easeInOut) {
-                                addingBundleTypes.insert(bundle.bundleType)
+                                viewModel.addingBundleTypes.insert(bundle.bundleType)
                             }
                             do {
-                                try await MockRegistryService.shared.applySmartBundle(registryId: registry.id, bundleType: bundle.bundleType)
+                                try await MockRegistryService.shared.applySmartBundle(registryId: viewModel.registry.id, bundleType: bundle.bundleType)
                                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s for backend inserts
-                                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: registry.id)
+                                try await MockRegistryService.shared.fetchRegistryDashboard(registryId: viewModel.registry.id)
                                 await MainActor.run {
                                     withAnimation(.spring(response: 0.6, dampingFraction: 0.7, blendDuration: 0)) {
-                                        items = MockRegistryService.shared.registryItems[registry.id] ?? []
+                                        viewModel.items = MockRegistryService.shared.registryItems[viewModel.registry.id] ?? []
                                     }
-                                    toastMessage = "Starter Bundle Added!"
+                                    viewModel.toastMessage = "Starter Bundle Added!"
                                     withAnimation(.spring()) {
-                                        showingToast = true
+                                        viewModel.showingToast = true
                                     }
                                 }
                             } catch {
                                 await MainActor.run {
-                                    toastMessage = error.localizedDescription
+                                    viewModel.toastMessage = error.localizedDescription
                                     withAnimation(.spring()) {
-                                        showingToast = true
+                                        viewModel.showingToast = true
                                     }
                                 }
                             }
                             await MainActor.run {
                                 withAnimation(.easeInOut) {
-                                    addingBundleTypes.remove(bundle.bundleType)
+                                    viewModel.addingBundleTypes.remove(bundle.bundleType)
                                 }
                             }
                         }
@@ -233,9 +217,9 @@ struct RegistryDashboardView: View {
                 
                 // MARK: - Registry Items List Section
                 Section(header: Text("Your Registry Items").font(.headline).foregroundColor(.primary).padding(.horizontal, 20)) {
-                    if items.isEmpty {
+                    if viewModel.items.isEmpty {
                         VStack(spacing: 8) {
-                            Text("Your registry is empty.")
+                            Text("Your viewModel.registry is empty.")
                                 .font(.subheadline)
                                 .fontWeight(.bold)
                             Text("Try adding a Smart Bundle above or tap Add Items to add custom products.")
@@ -251,30 +235,30 @@ struct RegistryDashboardView: View {
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                     } else {
-                        ForEach(items) { item in
-                            RegistryItemRow(item: item, registryId: registry.id, onTap: {
+                        ForEach(viewModel.items) { item in
+                            RegistryItemRow(item: item, registryId: viewModel.registry.id, onTap: {
                                 if let contribs = item.contributions, !contribs.isEmpty {
-                                    selectedItemForContributors = item
+                                    viewModel.selectedItemForContributors = item
                                 } else if let prod = item.products {
-                                    selectedProductForDetail = prod
+                                    viewModel.selectedProductForDetail = prod
                                 }
                             }, onTagUpdate: {
-                                items = MockRegistryService.shared.registryItems[registry.id] ?? []
+                                viewModel.items = MockRegistryService.shared.registryItems[viewModel.registry.id] ?? []
                             })
                             .listRowBackground(Color.white)
                             .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 // Swipe Option 1: Delete with Confirmation
                                 Button(role: .destructive) {
-                                    itemToDelete = item
-                                    showingItemDeleteConfirmation = true
+                                    viewModel.itemToDelete = item
+                                    viewModel.showingItemDeleteConfirmation = true
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
                                 
                                 // Swipe Option 2: Tags
                                 Button {
-                                    selectedItemForTagging = item
+                                    viewModel.selectedItemForTagging = item
                                 } label: {
                                     Label("Tags", systemImage: "tag")
                                 }
@@ -289,12 +273,12 @@ struct RegistryDashboardView: View {
             .background(Color.white)
             
             // MARK: - Premium Pop-up HUD Alert (Auto-dismisses in 1.2 seconds)
-            if showingToast {
+            if viewModel.showingToast {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 32))
                         .foregroundColor(.white)
-                    Text(toastMessage)
+                    Text(viewModel.toastMessage)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
@@ -309,19 +293,19 @@ struct RegistryDashboardView: View {
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         withAnimation {
-                            showingToast = false
+                            viewModel.showingToast = false
                         }
                     }
                 }
             }
 
-            if isLoadingDashboard {
-                RegistryLoadingOverlay(message: dashboardLoadingMessage)
+            if viewModel.isLoadingDashboard {
+                RegistryLoadingOverlay(message: viewModel.dashboardLoadingMessage)
             }
         }
         .onAppear {
             Task {
-                await refreshDashboard(message: "Loading registry...")
+                await viewModel.refreshDashboard(message: "Loading viewModel.registry...")
                 await RecommendationEngine.shared.fetchRecommendations()
             }
         }
@@ -330,7 +314,7 @@ struct RegistryDashboardView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // Native iOS Sharing Button Only! No Done button.
                 Button(action: {
-                    showShareSheet = true
+                    viewModel.showShareSheet = true
                 }) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.title3)
@@ -338,101 +322,84 @@ struct RegistryDashboardView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingEditSheet) {
-            RegistryEditView(registry: $registry, items: $items, onSave: {
+        .sheet(isPresented: $viewModel.showingEditSheet) {
+            RegistryEditView(registry: $viewModel.registry, items: $viewModel.items, onSave: {
                 Task {
-                    await refreshDashboard(message: "Refreshing registry...")
+                    await viewModel.refreshDashboard(message: "Refreshing registry...")
                 }
             }, onDelete: {
                 dismiss()
             })
         }
-        .sheet(isPresented: $showingAddProductsSheet) {
-            RegistryAddProductsView(registryId: registry.id) {
+        .sheet(isPresented: $viewModel.showingAddProductsSheet) {
+            RegistryAddProductsView(registryId: viewModel.registry.id) {
                 Task {
-                    await refreshDashboard(message: "Refreshing items...")
+                    await viewModel.refreshDashboard(message: "Refreshing viewModel.items...")
                 }
             }
         }
-        .sheet(item: $selectedProductForDetail) { product in
+        .sheet(item: $viewModel.selectedProductForDetail) { product in
             NavigationStack {
                 ProductDetailView(product: product, showCloseButton: true)
             }
         }
-        .sheet(item: $selectedItemForContributors) { item in
+        .sheet(item: $viewModel.selectedItemForContributors) { item in
             RegistryItemContributorsView(item: item)
         }
-        .sheet(item: $selectedItemForTagging) { item in
-            RegistryItemTagEditView(registryId: registry.id, item: item) {
+        .sheet(item: $viewModel.selectedItemForTagging) { item in
+            RegistryItemTagEditView(registryId: viewModel.registry.id, item: item) {
                 Task {
-                    await refreshDashboard(message: "Updating item...")
+                    await viewModel.refreshDashboard(message: "Updating item...")
                 }
             }
         }
-        .sheet(isPresented: $showShareSheet) {
-            RegistryShareSheetView(registryId: registry.id, fallbackCode: registry.code) { textToShare in
+        .sheet(isPresented: $viewModel.showShareSheet) {
+            RegistryShareSheetView(registryId: viewModel.registry.id, fallbackCode: viewModel.registry.code) { textToShare in
                 shareText(textToShare)
             }
         }
         // MARK: - Trailing Item Deletion Confirmation
-        .alert("Delete Registry Item", isPresented: $showingItemDeleteConfirmation) {
+        .alert("Delete Registry Item", isPresented: $viewModel.showingItemDeleteConfirmation) {
             Button("Delete", role: .destructive) {
-                if let item = itemToDelete {
+                if let item = viewModel.itemToDelete {
                     Task {
                         await MainActor.run {
-                            dashboardLoadingMessage = "Deleting item..."
-                            isLoadingDashboard = true
+                            viewModel.dashboardLoadingMessage = "Deleting item..."
+                            viewModel.isLoadingDashboard = true
                         }
                         do {
-                            try await RegistryService.shared.deleteRegistryItem(registryId: registry.id, itemId: item.id)
-                            try await registryService.fetchRegistryDashboard(registryId: registry.id)
+                            try await RegistryService.shared.deleteRegistryItem(registryId: viewModel.registry.id, itemId: item.id)
+                            try await MockRegistryService.shared.fetchRegistryDashboard(registryId: viewModel.registry.id)
                             await MainActor.run {
-                                items = registryService.registryItems[registry.id] ?? []
-                                isLoadingDashboard = false
+                                viewModel.items = MockRegistryService.shared.registryItems[viewModel.registry.id] ?? []
+                                viewModel.isLoadingDashboard = false
                             }
                         } catch {
                             await MainActor.run {
-                                isLoadingDashboard = false
-                                toastMessage = error.localizedDescription
+                                viewModel.isLoadingDashboard = false
+                                viewModel.toastMessage = error.localizedDescription
                                 withAnimation(.spring()) {
-                                    showingToast = true
+                                    viewModel.showingToast = true
                                 }
                             }
                         }
                     }
                 }
-                itemToDelete = nil
+                viewModel.itemToDelete = nil
             }
             Button("Cancel", role: .cancel) {
-                itemToDelete = nil
+                viewModel.itemToDelete = nil
             }
         } message: {
-            if let item = itemToDelete, let product = item.products {
-                Text("Are you sure you want to remove \(product.name) from your registry?")
+            if let item = viewModel.itemToDelete, let product = item.products {
+                Text("Are you sure you want to remove \(product.name) from your viewModel.registry?")
             } else {
                 Text("Are you sure you want to remove this item?")
             }
         }
     }
 
-    @MainActor
-    private func refreshDashboard(message: String) async {
-        dashboardLoadingMessage = message
-        isLoadingDashboard = true
-        do {
-            try await registryService.fetchRegistryDashboard(registryId: registry.id)
-            await registryService.fetchStarterBundles(eventType: registry.type)
-            items = registryService.registryItems[registry.id] ?? []
-        } catch {
-            toastMessage = error.localizedDescription
-            withAnimation(.spring()) {
-                showingToast = true
-            }
-        }
-        isLoadingDashboard = false
-    }
 }
-
 // MARK: - Registry Edit Sheet with persistent Information Labels
 
 struct RegistryEditView: View {
