@@ -58,5 +58,8 @@ struct RegistryCoordinatorView: View {
                 }
             }
         }
+        .onAppear {
+            NotificationCenter.default.post(name: .aiRegistryViewed, object: nil)
+        }
     }
 }

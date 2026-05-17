@@ -144,6 +144,9 @@ class SearchViewModel: ObservableObject {
         hasSearched = true
         currentPage = 1
         
+        // Notify AI bubble
+        NotificationCenter.default.post(name: .aiSearchPerformed, object: nil, userInfo: ["query": trimmedQuery])
+        
         // Trigger the Combine pipeline
         searchSubject.send((trimmedQuery, 1, false))
     }

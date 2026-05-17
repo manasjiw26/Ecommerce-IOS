@@ -150,7 +150,10 @@ struct CheckoutSheetView: View {
             )
             .presentationDetents([.large])
         }
-        .onAppear { applySelectedAddress() }
+        .onAppear {
+            applySelectedAddress()
+            NotificationCenter.default.post(name: .aiCheckoutStarted, object: nil)
+        }
         .animation(.easeInOut(duration: 0.25), value: step)
         .animation(.spring(response: 0.4), value: confirmation)
     }

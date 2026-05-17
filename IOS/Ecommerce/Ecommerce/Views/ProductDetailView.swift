@@ -334,6 +334,12 @@ struct ProductDetailView: View {
             RecommendationEngine.shared.logEvent(productId: product.id, eventType: "view")
             RecommendationEngine.shared.recordView(product: product)
             productViewModel.activeProductId = product.id
+            // Notify AI bubble with product context
+            NotificationCenter.default.post(
+                name: .aiDidSpotProduct,
+                object: nil,
+                userInfo: ["name": product.name, "id": product.id]
+            )
         }
 
         .onDisappear {
